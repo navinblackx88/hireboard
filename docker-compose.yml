@@ -1,0 +1,54 @@
+# HireFlow: local MVP demo, no cloud services needed.
+#
+#   docker compose up --build        then open http://localhost:8080
+#
+#   App + API      http://localhost:8080          (nginx serves the app and proxies /api, incl. the live event stream)
+#   API docs       http://localhost:8080/api/docs
+#   Email inbox    http://localhost:8025          (Mailpit shows every notification email)
+#   Demo logins    admin@hireflow.dev (admin) · nina@northwind.dev (employer) · asha@example.dev (candidate)
+#                  password: password123
+#
+#   AI scoring uses the built-in keyword scorer offline. To use OpenAI instead: OPENAI_API_KEY=sk-… docker compose up -d
+#   Reset all data: docker compose down -v
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment: { POSTGRES_USER: hf, POSTGRES_PASSWORD: hf, POSTGRES_DB: hireflow }
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U hf"], interval: 3s, retries: 20 }
+
+  mailpit:
+    image: axllent/mailpit:latest
+    ports: ["8025:8025"]
+
+  api:
+    build: { context: ., dockerfile: backend/Dockerfile }
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment:
+      PORT: 4000
+      APP_URL: http://localhost:8080
+      API_URL: http://localhost:8080
+      DATABASE_URL: postgres://hf:hf@postgres:5432/hireflow
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-local-demo-access-secret-change-me}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@hireflow.dev}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-password123}
+      SEED_DEMO_DATA: ${SEED_DEMO_DATA:-true}    # false = start with an empty install (admin only)
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}        # empty = offline keyword scorer
+      STORAGE_DRIVER: local                      # resumes on the `uploads` volume
+      LOCAL_UPLOAD_DIR: /app/backend/uploads
+      SMTP_HOST: mailpit
+      SMTP_PORT: 1025
+    volumes: [uploads:/app/backend/uploads]
+    restart: unless-stopped
+
+  web:
+    build: { context: ., dockerfile: frontend/Dockerfile }
+    depends_on:
+      api: { condition: service_healthy }
+    ports: ["8080:80"]
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  uploads:

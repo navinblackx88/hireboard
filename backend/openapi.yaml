@@ -1,0 +1,954 @@
+openapi: 3.0.3
+info:
+  title: HireFlow API
+  version: 1.0.0
+  description: |
+    REST API for HireFlow, a job board with AI-assisted applicant screening.
+
+    **Roles.** `candidate` (browse, upload resumes, apply, track applications), `employer` (post jobs,
+    review applicants and AI match scores, move applications through the pipeline) and `admin`
+    (moderate job postings, manage users, view analytics). Anyone can sign up as candidate or employer;
+    admins are provisioned (`ADMIN_EMAIL`/`ADMIN_PASSWORD`, or promoted by another admin).
+
+    **Auth.** `Authorization: Bearer <accessToken>` (JWT, 15 min). Refresh with `POST /auth/refresh`; refresh
+    tokens are opaque, stored as hashes in Redis, and rotated on every use. Role and suspension changes
+    take effect within 60 seconds, without waiting for the token to expire.
+
+    **Job lifecycle.** `draft` → `pending_review` → `published` (approved by an admin) or `rejected`
+    (with a reason; edit and resubmit) → `closed`. Editing the content of a published job sends it back to review.
+
+    **Application lifecycle.**
+    `submitted → reviewing | shortlisted | rejected`, `reviewing → shortlisted | interview | rejected`,
+    `shortlisted → reviewing | interview | rejected`, `interview → shortlisted | offered | rejected`,
+    `offered → hired | rejected`. Candidates may withdraw any non-final application.
+    Every change emails the candidate (unless they opted out) and is pushed in real time.
+
+    **AI match scores.** Each application is scored in the background: the resume text and job description
+    go to the OpenAI Chat Completions API with a strict JSON schema, and a 0–100 score, a summary, strengths and gaps
+    come back. Without `OPENAI_API_KEY`, a transparent keyword-overlap scorer is used (`provider: heuristic`).
+    Scores are shown to employers and admins only.
+
+    **Real-time (SSE).** `POST /events/ticket`, then open `GET /events?ticket=…` with `EventSource`.
+    Events: `application.created`, `application.scored`, `application.status_changed` (to the candidate
+    and the employer), `job.submitted` (to admins) and `job.status_changed` (to the employer).
+
+    **Pagination.** List endpoints take `page` (1-based) and `pageSize`, and return `items`, `page`, `pageSize`, `total` and `totalPages`.
+servers:
+  - url: http://localhost:4000/api/v1
+    description: Local
+security:
+  - bearerAuth: []
+tags:
+  - { name: Auth, description: "Signup, login, token refresh, profile" }
+  - { name: Jobs, description: "Public job search and employer job management" }
+  - { name: Applications, description: "Applying, tracking, and the employer review pipeline" }
+  - { name: Resumes, description: "Candidate resume upload (PDF/DOCX) and storage (S3/GCS)" }
+  - { name: AI Scoring, description: "Resume ↔ job match scoring via OpenAI" }
+  - { name: Admin, description: "Moderation, users, analytics, email log" }
+  - { name: Realtime, description: "Server-Sent Events stream, plus runtime config" }
+
+paths:
+  # ─── Auth ──────────────────────────────────────────────────────────────────
+  /auth/signup:
+    post:
+      tags: [Auth]
+      summary: Create a candidate or employer account
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email, password, role]
+              properties:
+                name: { type: string, maxLength: 120 }
+                email: { type: string, format: email }
+                password: { type: string, minLength: 8, maxLength: 128 }
+                role: { type: string, enum: [candidate, employer] }
+                companyName: { type: string, maxLength: 160, description: Required when role is employer }
+                headline: { type: string, maxLength: 200, description: Candidates only }
+                location: { type: string, maxLength: 120 }
+      responses:
+        "201": { description: Account created, content: { application/json: { schema: { $ref: "#/components/schemas/AuthResponse" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Log in
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/AuthResponse" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { description: Account suspended, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Rotate the refresh token and get a new access token
+      security: []
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/RefreshRequest" } } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/TokenPair" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: End a session (revoke the refresh token)
+      security: []
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/RefreshRequest" } } }
+      responses:
+        "204": { description: Signed out }
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Current user
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: object, properties: { user: { $ref: "#/components/schemas/Me" } } } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    patch:
+      tags: [Auth]
+      summary: Update profile, email preferences or password
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                companyName: { type: string, description: Employers only }
+                companyWebsite: { type: string, format: uri, nullable: true, description: Employers only }
+                headline: { type: string, nullable: true }
+                location: { type: string, nullable: true }
+                emailNotifications: { type: boolean }
+                currentPassword: { type: string }
+                newPassword: { type: string, minLength: 8 }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: object, properties: { user: { $ref: "#/components/schemas/Me" } } } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+
+  # ─── Realtime ──────────────────────────────────────────────────────────────
+  /events/ticket:
+    post:
+      tags: [Realtime]
+      summary: Get a single-use ticket for the event stream
+      description: EventSource can't send headers, so authenticate here first. The ticket is valid for 60 seconds and works once.
+      responses:
+        "201":
+          description: Ticket issued
+          content: { application/json: { schema: { type: object, properties: { ticket: { type: string }, expiresInSeconds: { type: integer } } } } }
+  /events:
+    get:
+      tags: [Realtime]
+      summary: Server-Sent Events stream
+      security: []
+      parameters:
+        - { name: ticket, in: query, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: |
+            `text/event-stream`. Each message has `event:` (`ready`, `application.created`, `application.scored`,
+            `application.status_changed`, `job.submitted`, `job.status_changed`) and `data:` (JSON, see `RealtimeEvent`).
+            A comment ping is sent every 25 s.
+          content:
+            text/event-stream:
+              schema: { $ref: "#/components/schemas/RealtimeEvent" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  # ─── Jobs ──────────────────────────────────────────────────────────────────
+  /jobs:
+    get:
+      tags: [Jobs]
+      summary: Search published jobs (paginated, filterable)
+      description: Public. Results are cached in Redis for 60 s and invalidated on any job change. Signed-in candidates also get `hasApplied`.
+      security: [{}, { bearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/page" }
+        - { name: pageSize, in: query, schema: { type: integer, default: 12, minimum: 1, maximum: 50 } }
+        - { name: q, in: query, description: "Keywords (full-text across title, company and description; also matches skills)", schema: { type: string } }
+        - { name: location, in: query, description: "Substring match, e.g. `Bengaluru`", schema: { type: string } }
+        - { name: type, in: query, description: Comma-separated employment types, schema: { type: string, example: "full_time,contract" } }
+        - { name: workplace, in: query, description: Comma-separated, schema: { type: string, example: "remote,hybrid" } }
+        - { name: experience, in: query, description: Comma-separated experience levels, schema: { type: string, example: "mid,senior" } }
+        - { name: salaryMin, in: query, description: Jobs that can pay at least this (their maximum is at or above it), schema: { type: integer, minimum: 0 } }
+        - { name: salaryMax, in: query, description: Jobs whose minimum is at or below this, schema: { type: integer, minimum: 0 } }
+        - { name: postedWithinDays, in: query, schema: { type: integer, minimum: 1, maximum: 365 } }
+        - { name: sort, in: query, schema: { type: string, enum: [newest, salary_desc, salary_asc, relevance], default: newest } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PageMeta"
+                  - type: object
+                    properties:
+                      items: { type: array, items: { $ref: "#/components/schemas/JobSummary" } }
+    post:
+      tags: [Jobs]
+      summary: Create a job (employer)
+      description: With `submit` true (the default) the job goes straight to `pending_review`; otherwise it's saved as a `draft`. The company name comes from the employer's profile.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/JobInput"
+                - type: object
+                  required: [title, description, location]
+                  properties: { submit: { type: boolean, default: true } }
+      responses:
+        "201": { description: Created, content: { application/json: { schema: { $ref: "#/components/schemas/Job" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /jobs/locations:
+    get:
+      tags: [Jobs]
+      summary: Locations with open jobs (for filter suggestions)
+      security: []
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { type: object, properties: { items: { type: array, items: { type: object, properties: { location: { type: string }, n: { type: integer } } } } } } } }
+  /jobs/{id}:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    get:
+      tags: [Jobs]
+      summary: Job detail
+      description: Public for published jobs; owners and admins can see any status. Candidates also get `myApplication`.
+      security: [{}, { bearerAuth: [] }]
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/JobDetail" } } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [Jobs]
+      summary: Update a job (owner or admin)
+      description: When an employer changes the content of a published job (title, description, requirements, skills, salary, location), it returns to `pending_review` and `requiresReview` is true.
+      requestBody:
+        content: { application/json: { schema: { $ref: "#/components/schemas/JobInput" } } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Job"
+                  - type: object
+                    properties: { requiresReview: { type: boolean } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [Jobs]
+      summary: Delete a job (owner without applicants, or admin)
+      responses:
+        "204": { description: Deleted }
+        "409": { description: Has applicants (close it instead), content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /jobs/{id}/submit:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    post:
+      tags: [Jobs]
+      summary: Submit a draft or rejected job for review (owner)
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Job" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+  /jobs/{id}/close:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    post:
+      tags: [Jobs]
+      summary: Close a published job to new applications (owner or admin)
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Job" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+  /employer/jobs:
+    get:
+      tags: [Jobs]
+      summary: My job postings, all statuses, with applicant counts (employer)
+      parameters:
+        - { $ref: "#/components/parameters/page" }
+        - { $ref: "#/components/parameters/pageSize" }
+        - { name: status, in: query, description: Comma-separated job statuses, schema: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PageMeta"
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          allOf:
+                            - $ref: "#/components/schemas/Job"
+                            - type: object
+                              properties:
+                                applicants: { type: integer }
+                                newApplicants: { type: integer }
+                                avgScore: { type: integer, nullable: true }
+  /employer/stats:
+    get:
+      tags: [Jobs]
+      summary: Employer dashboard counters
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  jobs: { type: object, properties: { total: { type: integer }, published: { type: integer }, pending: { type: integer } } }
+                  applications: { type: object, properties: { total: { type: integer }, new: { type: integer }, interviewing: { type: integer }, avgScore: { type: integer, nullable: true } } }
+
+  # ─── Applications ──────────────────────────────────────────────────────────
+  /jobs/{id}/applications:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    post:
+      tags: [Applications]
+      summary: Apply to a job (candidate)
+      description: Uses the given resume, or the candidate's default. Triggers background AI scoring and emails the candidate (confirmation) and the employer (new applicant).
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                resumeId: { type: string, format: uuid }
+                coverLetter: { type: string, maxLength: 5000 }
+      responses:
+        "201":
+          description: Applied
+          content: { application/json: { schema: { type: object, properties: { id: { type: string, format: uuid }, jobId: { type: string, format: uuid }, status: { $ref: "#/components/schemas/ApplicationStatus" }, createdAt: { type: string, format: date-time } } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    get:
+      tags: [Applications]
+      summary: Applicants for a job, with AI match scores (owner or admin)
+      parameters:
+        - { $ref: "#/components/parameters/page" }
+        - { $ref: "#/components/parameters/pageSize" }
+        - { name: status, in: query, description: Comma-separated application statuses, schema: { type: string } }
+        - { name: minScore, in: query, schema: { type: integer, minimum: 0, maximum: 100 } }
+        - { name: q, in: query, description: Candidate name or email, schema: { type: string } }
+        - { name: sort, in: query, schema: { type: string, enum: [score, newest, oldest], default: score } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PageMeta"
+                  - type: object
+                    properties:
+                      items: { type: array, items: { $ref: "#/components/schemas/Applicant" } }
+                      counts: { type: object, additionalProperties: { type: integer }, description: Applications per status for this job }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /applications/me:
+    get:
+      tags: [Applications]
+      summary: My applications (candidate)
+      parameters:
+        - { $ref: "#/components/parameters/page" }
+        - { $ref: "#/components/parameters/pageSize" }
+        - { name: status, in: query, description: Comma-separated, schema: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PageMeta"
+                  - type: object
+                    properties:
+                      items: { type: array, items: { $ref: "#/components/schemas/MyApplication" } }
+                      counts: { type: object, additionalProperties: { type: integer } }
+  /applications/{id}:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    get:
+      tags: [Applications]
+      summary: Application detail with status timeline
+      description: Visible to the candidate, the job's employer and admins. `score` and the resume text are omitted for candidates.
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/ApplicationDetail" } } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /applications/{id}/status:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    patch:
+      tags: [Applications]
+      summary: Move an application through the pipeline (employer or admin)
+      description: Validated against the lifecycle in the API description. Emails the candidate and pushes `application.status_changed`. The `note` is shown to the candidate.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { $ref: "#/components/schemas/ApplicationStatus" }
+                note: { type: string, maxLength: 2000 }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/StatusChange" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /applications/{id}/withdraw:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    post:
+      tags: [Applications]
+      summary: Withdraw my application (candidate)
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/StatusChange" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+  /applications/{id}/rescore:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    post:
+      tags: [AI Scoring]
+      summary: Re-run AI scoring for an application (employer or admin)
+      responses:
+        "202": { description: Queued, content: { application/json: { schema: { type: object, properties: { id: { type: string }, scoreStatus: { type: string, enum: [pending] } } } } } }
+  /applications/{id}/resume:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    get:
+      tags: [Applications]
+      summary: Download URL for the resume sent with this application
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/DownloadUrl" } } } }
+
+  # ─── Resumes ───────────────────────────────────────────────────────────────
+  /resumes:
+    get:
+      tags: [Resumes]
+      summary: My resumes (candidate)
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: object, properties: { items: { type: array, items: { $ref: "#/components/schemas/Resume" } } } } } } }
+    post:
+      tags: [Resumes]
+      summary: Upload a resume (PDF or DOCX, 5 MB max)
+      description: The file type is checked by content, not extension. Text is extracted on upload (files with too little text, such as scanned images, are rejected). The first resume becomes the default. Up to 10 per candidate.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        "201": { description: Uploaded, content: { application/json: { schema: { $ref: "#/components/schemas/Resume" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "413": { description: File too large, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /config:
+    get:
+      tags: [Realtime]
+      summary: Runtime config for clients (upload size limit)
+      security: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  uploads: { type: object, properties: { maxMb: { type: number } } }
+  /resumes/{id}:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    get:
+      tags: [Resumes]
+      summary: Resume with full extracted text
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Resume"
+                  - type: object
+                    properties: { extractedText: { type: string } }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [Resumes]
+      summary: Delete a resume
+      description: If it was sent with an application, it's hidden from you but kept for that employer.
+      responses:
+        "204": { description: Deleted }
+  /resumes/{id}/default:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    post:
+      tags: [Resumes]
+      summary: Make this the default resume for applications
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Resume" } } } }
+  /resumes/{id}/download:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    get:
+      tags: [Resumes]
+      summary: Short-lived download URL
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/DownloadUrl" } } } }
+  /files/resumes/{id}:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    get:
+      tags: [Resumes]
+      summary: Signed download target (local storage driver)
+      security: []
+      parameters:
+        - { name: sig, in: query, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: File
+          content:
+            application/pdf: { schema: { type: string, format: binary } }
+            application/vnd.openxmlformats-officedocument.wordprocessingml.document: { schema: { type: string, format: binary } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  # ─── AI scoring ────────────────────────────────────────────────────────────
+  /scoring/config:
+    get:
+      tags: [AI Scoring]
+      summary: Which scorer is active (employer or admin)
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { type: object, properties: { provider: { type: string, enum: [openai, heuristic] }, model: { type: string, nullable: true } } } } }
+  /scoring/match:
+    post:
+      tags: [AI Scoring]
+      summary: Score resume text against a job (synchronous; employer or admin)
+      description: Sends the resume text and job description to OpenAI and returns the match. Pass `jobId` (one of your jobs) or an ad-hoc `jobTitle` and `jobDescription`. Rate-limited to 20 per minute.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [resumeText]
+              properties:
+                resumeText: { type: string, minLength: 50, maxLength: 50000 }
+                jobId: { type: string, format: uuid }
+                jobTitle: { type: string }
+                jobDescription: { type: string, minLength: 30 }
+                skills: { type: array, items: { type: string } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/MatchResult" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "502": { description: The AI provider failed, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
+  # ─── Admin ─────────────────────────────────────────────────────────────────
+  /admin/jobs:
+    get:
+      tags: [Admin]
+      summary: All jobs, with jobs awaiting review first
+      parameters:
+        - { $ref: "#/components/parameters/page" }
+        - { $ref: "#/components/parameters/pageSize" }
+        - { name: status, in: query, description: "Comma-separated, e.g. `pending_review`", schema: { type: string } }
+        - { name: q, in: query, description: Title or company, schema: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PageMeta"
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          allOf:
+                            - $ref: "#/components/schemas/Job"
+                            - type: object
+                              properties: { employer: { type: object, properties: { id: { type: string }, name: { type: string }, email: { type: string } } } }
+  /admin/jobs/{id}/approve:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    post:
+      tags: [Admin]
+      summary: Approve and publish a pending job
+      responses:
+        "200": { description: Published, content: { application/json: { schema: { $ref: "#/components/schemas/Job" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+  /admin/jobs/{id}/reject:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    post:
+      tags: [Admin]
+      summary: Reject a pending job with a reason (emailed to the employer)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [reason], properties: { reason: { type: string, minLength: 5, maxLength: 2000 } } } } }
+      responses:
+        "200": { description: Rejected, content: { application/json: { schema: { $ref: "#/components/schemas/Job" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+  /admin/users:
+    get:
+      tags: [Admin]
+      summary: Search users
+      parameters:
+        - { $ref: "#/components/parameters/page" }
+        - { $ref: "#/components/parameters/pageSize" }
+        - { name: q, in: query, description: "Name, email or company", schema: { type: string } }
+        - { name: role, in: query, schema: { $ref: "#/components/schemas/Role" } }
+        - { name: status, in: query, schema: { type: string, enum: [active, suspended] } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PageMeta"
+                  - type: object
+                    properties: { items: { type: array, items: { $ref: "#/components/schemas/AdminUser" } } }
+  /admin/users/{id}:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    patch:
+      tags: [Admin]
+      summary: Change a user's role or suspend/reactivate them
+      description: Suspending signs the user out everywhere and hides a suspended employer's jobs. You can't change yourself.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                role: { $ref: "#/components/schemas/Role" }
+                status: { type: string, enum: [active, suspended] }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/AdminUser" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /admin/analytics:
+    get:
+      tags: [Admin]
+      summary: Platform analytics (cached 60 s)
+      parameters:
+        - { name: days, in: query, schema: { type: integer, default: 30, minimum: 7, maximum: 365 } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Analytics" } } } }
+  /admin/emails:
+    get:
+      tags: [Admin]
+      summary: Notification email log
+      parameters:
+        - { $ref: "#/components/parameters/page" }
+        - { $ref: "#/components/parameters/pageSize" }
+        - { name: template, in: query, schema: { type: string, enum: [application_received, new_applicant, application_status, job_approved, job_rejected] } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PageMeta"
+                  - type: object
+                    properties: { items: { type: array, items: { $ref: "#/components/schemas/EmailLogEntry" } } }
+
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  parameters:
+    id: { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    page: { name: page, in: query, schema: { type: integer, default: 1, minimum: 1 } }
+    pageSize: { name: pageSize, in: query, schema: { type: integer, default: 20, minimum: 1, maximum: 100 } }
+  responses:
+    BadRequest: { description: Validation failed, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    Unauthorized: { description: Missing or invalid credentials, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    Forbidden: { description: Wrong role, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    NotFound: { description: Not found or not visible to you, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    Conflict: { description: Conflicts with existing state, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code: { type: string }
+            message: { type: string }
+            details: { type: array, items: { type: object, properties: { path: { type: string }, message: { type: string } } } }
+    PageMeta:
+      type: object
+      properties:
+        page: { type: integer }
+        pageSize: { type: integer }
+        total: { type: integer }
+        totalPages: { type: integer }
+    Role: { type: string, enum: [admin, employer, candidate] }
+    JobStatus: { type: string, enum: [draft, pending_review, published, rejected, closed] }
+    ApplicationStatus: { type: string, enum: [submitted, reviewing, shortlisted, interview, offered, hired, rejected, withdrawn] }
+    EmploymentType: { type: string, enum: [full_time, part_time, contract, internship, temporary] }
+    Workplace: { type: string, enum: [onsite, hybrid, remote] }
+    ExperienceLevel: { type: string, enum: [entry, mid, senior, lead] }
+    Me:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        name: { type: string }
+        role: { $ref: "#/components/schemas/Role" }
+        status: { type: string, enum: [active, suspended] }
+        companyName: { type: string, nullable: true }
+        companyWebsite: { type: string, nullable: true }
+        headline: { type: string, nullable: true }
+        location: { type: string, nullable: true }
+        emailNotifications: { type: boolean }
+        createdAt: { type: string, format: date-time }
+    TokenPair:
+      type: object
+      properties:
+        accessToken: { type: string }
+        refreshToken: { type: string }
+        tokenType: { type: string, enum: [Bearer] }
+    RefreshRequest: { type: object, required: [refreshToken], properties: { refreshToken: { type: string } } }
+    AuthResponse:
+      allOf:
+        - $ref: "#/components/schemas/TokenPair"
+        - type: object
+          properties: { user: { $ref: "#/components/schemas/Me" } }
+    JobInput:
+      type: object
+      properties:
+        title: { type: string, minLength: 3, maxLength: 160 }
+        description: { type: string, minLength: 30 }
+        requirements: { type: string, nullable: true }
+        skills: { type: array, maxItems: 25, items: { type: string }, example: [typescript, node.js, postgresql] }
+        location: { type: string, example: "Bengaluru, India" }
+        workplace: { $ref: "#/components/schemas/Workplace" }
+        employmentType: { $ref: "#/components/schemas/EmploymentType" }
+        experienceLevel: { $ref: "#/components/schemas/ExperienceLevel" }
+        salaryMin: { type: integer, nullable: true, description: "Annual, in currency units" }
+        salaryMax: { type: integer, nullable: true }
+        currency: { type: string, pattern: "^[A-Z]{3}$", example: INR }
+        closesAt: { type: string, format: date-time, nullable: true }
+    JobSummary:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        company: { type: string }
+        description: { type: string, description: First 280 characters }
+        skills: { type: array, items: { type: string } }
+        location: { type: string }
+        workplace: { $ref: "#/components/schemas/Workplace" }
+        employmentType: { $ref: "#/components/schemas/EmploymentType" }
+        experienceLevel: { $ref: "#/components/schemas/ExperienceLevel" }
+        salaryMin: { type: integer, nullable: true }
+        salaryMax: { type: integer, nullable: true }
+        currency: { type: string }
+        publishedAt: { type: string, format: date-time }
+        closesAt: { type: string, format: date-time, nullable: true }
+        applicantCount: { type: integer }
+        hasApplied: { type: boolean, description: Signed-in candidates only }
+    Job:
+      allOf:
+        - $ref: "#/components/schemas/JobInput"
+        - type: object
+          properties:
+            id: { type: string, format: uuid }
+            employerId: { type: string, format: uuid }
+            company: { type: string }
+            status: { $ref: "#/components/schemas/JobStatus" }
+            rejectionReason: { type: string, nullable: true }
+            submittedAt: { type: string, format: date-time, nullable: true }
+            reviewedAt: { type: string, format: date-time, nullable: true }
+            publishedAt: { type: string, format: date-time, nullable: true }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
+    JobDetail:
+      allOf:
+        - $ref: "#/components/schemas/Job"
+        - type: object
+          properties:
+            isOpen: { type: boolean }
+            applicantCount: { type: integer }
+            canManage: { type: boolean }
+            myApplication: { type: object, nullable: true, properties: { id: { type: string }, status: { $ref: "#/components/schemas/ApplicationStatus" } } }
+    Resume:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        filename: { type: string }
+        mimeType: { type: string, enum: [application/pdf, application/vnd.openxmlformats-officedocument.wordprocessingml.document] }
+        sizeBytes: { type: integer }
+        pageCount: { type: integer, nullable: true }
+        isDefault: { type: boolean }
+        textPreview: { type: string, description: First 400 characters of the extracted text }
+        textLength: { type: integer }
+        createdAt: { type: string, format: date-time }
+    Score:
+      type: object
+      properties:
+        status: { type: string, enum: [pending, processing, completed, failed] }
+        value: { type: integer, nullable: true, minimum: 0, maximum: 100 }
+        summary: { type: string, nullable: true }
+        strengths: { type: array, items: { type: string } }
+        gaps: { type: array, items: { type: string } }
+        provider: { type: string, nullable: true, example: "openai:gpt-4.1-mini" }
+        scoredAt: { type: string, format: date-time, nullable: true }
+        error: { type: string, nullable: true }
+    MatchResult:
+      type: object
+      properties:
+        score: { type: integer, minimum: 0, maximum: 100 }
+        summary: { type: string }
+        strengths: { type: array, items: { type: string } }
+        gaps: { type: array, items: { type: string } }
+        provider: { type: string }
+    CandidateRef:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        email: { type: string }
+        headline: { type: string, nullable: true }
+        location: { type: string, nullable: true }
+    Applicant:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        status: { $ref: "#/components/schemas/ApplicationStatus" }
+        coverLetter: { type: string, nullable: true }
+        candidate: { $ref: "#/components/schemas/CandidateRef" }
+        resume: { type: object, properties: { id: { type: string }, filename: { type: string } } }
+        score: { $ref: "#/components/schemas/Score" }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    JobRef:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        company: { type: string }
+        location: { type: string }
+        workplace: { $ref: "#/components/schemas/Workplace" }
+        employmentType: { $ref: "#/components/schemas/EmploymentType" }
+        status: { $ref: "#/components/schemas/JobStatus" }
+    MyApplication:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        status: { $ref: "#/components/schemas/ApplicationStatus" }
+        job: { $ref: "#/components/schemas/JobRef" }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    ApplicationDetail:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        status: { $ref: "#/components/schemas/ApplicationStatus" }
+        coverLetter: { type: string, nullable: true }
+        job: { $ref: "#/components/schemas/JobRef" }
+        candidate: { $ref: "#/components/schemas/CandidateRef" }
+        resume: { type: object, properties: { id: { type: string }, filename: { type: string }, sizeBytes: { type: integer }, extractedText: { type: string, description: Employers and admins only } } }
+        score: { $ref: "#/components/schemas/Score" }
+        events:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              fromStatus: { allOf: [{ $ref: "#/components/schemas/ApplicationStatus" }], nullable: true }
+              toStatus: { $ref: "#/components/schemas/ApplicationStatus" }
+              note: { type: string, nullable: true }
+              actorName: { type: string, nullable: true, description: Employers and admins only }
+              createdAt: { type: string, format: date-time }
+        allowedTransitions: { type: array, items: { $ref: "#/components/schemas/ApplicationStatus" } }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    StatusChange:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        status: { $ref: "#/components/schemas/ApplicationStatus" }
+        updatedAt: { type: string, format: date-time }
+    DownloadUrl:
+      type: object
+      properties:
+        url: { type: string, format: uri, description: Presigned S3/GCS URL or signed API link }
+        filename: { type: string }
+        expiresInSeconds: { type: integer }
+    AdminUser:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        email: { type: string }
+        role: { $ref: "#/components/schemas/Role" }
+        status: { type: string, enum: [active, suspended] }
+        companyName: { type: string, nullable: true }
+        jobCount: { type: integer }
+        applicationCount: { type: integer }
+        createdAt: { type: string, format: date-time }
+        lastLoginAt: { type: string, format: date-time, nullable: true }
+    Analytics:
+      type: object
+      properties:
+        range: { type: object, properties: { days: { type: integer }, since: { type: string, format: date-time } } }
+        totals:
+          type: object
+          properties:
+            users: { type: object, additionalProperties: { type: integer } }
+            jobs: { type: object, additionalProperties: { type: integer } }
+            applications: { type: object, additionalProperties: { type: integer } }
+            pendingReview: { type: integer }
+            avgScore: { type: number, nullable: true }
+            scoredApplications: { type: integer }
+            avgReviewHours: { type: number, nullable: true, description: Mean time from submission to moderation decision }
+        applicationsPerDay: { type: array, items: { $ref: "#/components/schemas/DayCount" } }
+        signupsPerDay: { type: array, items: { $ref: "#/components/schemas/DayCount" } }
+        scoreDistribution: { type: array, items: { type: object, properties: { label: { type: string, example: "60–79" }, n: { type: integer } } } }
+        funnel: { type: array, items: { type: object, properties: { stage: { $ref: "#/components/schemas/ApplicationStatus" }, n: { type: integer } } } }
+        topJobs: { type: array, items: { type: object, properties: { id: { type: string }, title: { type: string }, company: { type: string }, applicants: { type: integer }, avgScore: { type: integer, nullable: true } } } }
+    DayCount: { type: object, properties: { day: { type: string, format: date }, n: { type: integer } } }
+    EmailLogEntry:
+      type: object
+      properties:
+        id: { type: string }
+        to: { type: string }
+        subject: { type: string }
+        template: { type: string }
+        status: { type: string, enum: [sent, logged, failed, skipped] }
+        error: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+    RealtimeEvent:
+      type: object
+      description: The `data` payload of an SSE message; which fields appear depends on the event.
+      properties:
+        applicationId: { type: string, format: uuid }
+        jobId: { type: string, format: uuid }
+        jobTitle: { type: string }
+        candidateName: { type: string }
+        from: { $ref: "#/components/schemas/ApplicationStatus" }
+        to: { $ref: "#/components/schemas/ApplicationStatus" }
+        note: { type: string, nullable: true }
+        score: { type: integer, nullable: true }
+        scoreStatus: { type: string }
+        status: { $ref: "#/components/schemas/JobStatus" }
+        reason: { type: string, nullable: true }
