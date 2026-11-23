@@ -25,7 +25,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends gosu && rm -rf 
 ENV NODE_ENV=production \
     STATIC_DIR=/app/frontend/dist \
     STORAGE_DRIVER=local \
-    LOCAL_UPLOAD_DIR=/data/uploads
+    LOCAL_UPLOAD_DIR=/data/uploads \
+    LOAD_SAMPLE_DATA=true \
+    SAMPLES_DIR=/app/samples
 WORKDIR /app
 COPY package.json ./
 COPY --from=prod-deps /app/node_modules ./node_modules
@@ -34,6 +36,8 @@ COPY --from=build /app/backend/dist ./backend/dist
 COPY --from=build /app/frontend/dist ./frontend/dist
 COPY backend/package.json backend/openapi.yaml ./backend/
 COPY backend/drizzle ./backend/drizzle
+COPY samples/jobs.json samples/applications.json ./samples/
+COPY samples/resumes ./samples/resumes
 COPY railway/start.sh /usr/local/bin/start.sh
 RUN chmod +x /usr/local/bin/start.sh
 WORKDIR /app/backend

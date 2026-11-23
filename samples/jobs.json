@@ -1,0 +1,59 @@
+{
+  "employer": { "name": "Talent Team", "email": "talent@lumora.example.com", "companyName": "Lumora Technologies" },
+  "jobs": [
+    {
+      "key": "backend",
+      "title": "Senior Backend Engineer (Node.js)",
+      "location": "Bengaluru, India", "workplace": "hybrid", "employmentType": "full_time", "experienceLevel": "senior",
+      "salaryMin": 3200000, "salaryMax": 4800000, "currency": "INR",
+      "skills": ["typescript", "node.js", "postgresql", "aws", "kafka", "redis"],
+      "description": "Lumora builds payments and invoicing software for 20,000 small businesses. You'll design and own the services behind invoicing, payouts and reconciliation: event-driven Node.js and TypeScript services on AWS, backed by PostgreSQL and Kafka. You'll work with product on scope, review designs, and share on-call with a team of six.",
+      "requirements": "5+ years building backend services in production.\nStrong TypeScript/Node.js and PostgreSQL (schema design, query tuning).\nExperience with AWS and with event streaming (Kafka or similar).\nComfortable owning services end to end, including on-call.\nNice to have: payments or financial ledgers, Terraform."
+    },
+    {
+      "key": "frontend",
+      "title": "Frontend Engineer (React)",
+      "location": "Remote (India)", "workplace": "remote", "employmentType": "full_time", "experienceLevel": "mid",
+      "salaryMin": 1800000, "salaryMax": 2800000, "currency": "INR",
+      "skills": ["react", "typescript", "tailwind css", "accessibility", "testing"],
+      "description": "Build the web app our customers use every day to send invoices and get paid. You'll ship features in React and TypeScript, grow our component library, and keep the app fast and accessible on low-end phones and slow networks.",
+      "requirements": "3+ years of professional React and TypeScript.\nSolid grasp of accessibility (WCAG, semantic HTML, keyboard and screen-reader support).\nExperience with automated testing (unit and end-to-end).\nNice to have: design-system work, Tailwind CSS, web-performance tuning."
+    },
+    {
+      "key": "data",
+      "title": "Data Scientist, Forecasting",
+      "location": "Hyderabad, India", "workplace": "hybrid", "employmentType": "full_time", "experienceLevel": "mid",
+      "salaryMin": 2200000, "salaryMax": 3400000, "currency": "INR",
+      "skills": ["python", "sql", "machine learning", "forecasting", "a/b testing", "statistics"],
+      "description": "Help small businesses predict their cash flow. You'll build forecasting and risk models from invoice and payment data, design experiments for new product features, and work with engineers to get models into production.",
+      "requirements": "3+ years of applied data science or machine learning.\nStrong Python (pandas, scikit-learn) and SQL.\nHands-on time-series forecasting and experiment design.\nAble to explain results to non-technical stakeholders.\nNice to have: Airflow/MLflow, fintech data."
+    },
+    {
+      "key": "design",
+      "title": "Product Designer",
+      "location": "Pune, India", "workplace": "hybrid", "employmentType": "full_time", "experienceLevel": "mid",
+      "salaryMin": 1800000, "salaryMax": 2600000, "currency": "INR",
+      "skills": ["figma", "user research", "prototyping", "design systems", "interaction design"],
+      "description": "Own the end-to-end design of our invoicing and payments flows. You'll run user research with small-business owners, prototype in Figma, and work closely with engineers to ship. You'll also help evolve our design system.",
+      "requirements": "3+ years of product design for web or mobile apps.\nA portfolio showing research-led product work, not only visuals.\nExpert Figma, including components and prototyping.\nExperience contributing to a design system.\nNice to have: B2B SaaS or fintech, basic HTML/CSS."
+    },
+    {
+      "key": "sre",
+      "title": "Site Reliability Engineer",
+      "location": "Bengaluru, India", "workplace": "hybrid", "employmentType": "full_time", "experienceLevel": "senior",
+      "salaryMin": 3000000, "salaryMax": 4500000, "currency": "INR",
+      "skills": ["kubernetes", "terraform", "aws", "prometheus", "linux", "ci/cd"],
+      "description": "Keep Lumora fast and available. You'll run our Kubernetes platform on AWS, manage infrastructure as code with Terraform, and own observability, SLOs and incident response alongside the product teams.",
+      "requirements": "5+ years in SRE, DevOps or platform engineering.\nProduction Kubernetes and Terraform on AWS.\nMonitoring and alerting with Prometheus/Grafana or similar.\nStrong Linux and scripting (Go, Python or Bash).\nNice to have: GitOps (Argo CD), SLOs and error budgets."
+    },
+    {
+      "key": "cs",
+      "title": "Customer Success Manager",
+      "location": "Mumbai, India", "workplace": "onsite", "employmentType": "full_time", "experienceLevel": "mid",
+      "salaryMin": 1200000, "salaryMax": 1800000, "currency": "INR",
+      "skills": ["account management", "onboarding", "renewals", "saas", "salesforce"],
+      "description": "Own a portfolio of mid-market customers from onboarding to renewal. You'll help them get value from Lumora quickly, run quarterly business reviews, spot churn risk early and find room to grow each account.",
+      "requirements": "3+ years in customer success or account management, ideally B2B SaaS.\nTrack record on retention and expansion.\nComfortable with CRM tools (Salesforce, HubSpot or Gainsight).\nClear written and spoken English; Hindi or Marathi a plus."
+    }
+  ]
+}

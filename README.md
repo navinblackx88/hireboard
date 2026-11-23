@@ -12,6 +12,7 @@ hireflow/
 │   ├── src/realtime/   SSE stream (Redis pub/sub fan-out)
 │   └── tests/          integration tests on real Postgres + Redis, with a mock Claude/Gemini/OpenAI server
 ├── frontend/  React 19 · TypeScript · shadcn/ui (Radix) · Tailwind CSS 4 · React Query · Zustand · Recharts
+├── samples/   6 sample jobs, 12 resumes (PDF/DOCX) and a loader: npm run samples
 └── docker-compose.yml  local demo stack: Postgres, Mailpit, API, nginx web (no cloud services)
 ```
 
@@ -22,6 +23,8 @@ hireflow/
 docker compose up --build
 ```
 Open **http://localhost:8080** and sign in as `admin@hireflow.dev`, `nina@northwind.dev` (employer) or `asha@example.dev` (candidate), password `password123`. Emails land at http://localhost:8025, API docs at http://localhost:8080/api/docs. Scoring uses the offline keyword scorer; set `GEMINI_API_KEY` (free from Google AI Studio) or `ANTHROPIC_API_KEY` for AI scoring. See **[LOCAL-DEMO.md](LOCAL-DEMO.md)** for the architecture, a 10-minute demo script and operations.
+
+**Sample data:** on first start (Docker or Railway) the app also loads 6 sample jobs and 18 applications from 12 sample resumes (PDF and Word, strong to weak fits); set `LOAD_SAMPLE_DATA=false` to skip. Sign in as `talent@lumora.example.com` / `password123` to see them. See **[samples/README.md](samples/README.md)**.
 
 **Local** (Postgres 16 + Redis 7):
 ```bash

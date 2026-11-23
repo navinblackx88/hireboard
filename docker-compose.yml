@@ -35,6 +35,7 @@ services:
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@hireflow.dev}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-password123}
       SEED_DEMO_DATA: ${SEED_DEMO_DATA:-true}    # false = start with an empty install (admin only)
+      LOAD_SAMPLE_DATA: ${LOAD_SAMPLE_DATA:-true} # samples/: 6 jobs + 18 applications from 12 resumes, first start only
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}        # Gemini scoring (free key from Google AI Studio)
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.8-flash}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}  # Claude scoring (preferred when set); no AI key at all = offline keyword scorer

@@ -108,6 +108,7 @@ Optional settings (put them in a `.env` file next to `docker-compose.yml`, or ex
 | `ANTHROPIC_API_KEY` | empty | Enables AI scoring with Claude; used instead of Gemini when both are set (needs internet) |
 | `ANTHROPIC_MODEL` | `claude-sonnet-5-5` | `claude-haiku-5-5` is cheaper and faster |
 | `SEED_DEMO_DATA` | `true` | `false` = empty install with the admin only |
+| `LOAD_SAMPLE_DATA` | `true` | Loads `samples/` (6 jobs, 18 applications from 12 PDF/Word resumes) on first start |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | admin@hireflow.dev / password123 | Bootstrap admin |
 | `JWT_ACCESS_SECRET` | demo value | Change it for anything beyond a local demo |
 

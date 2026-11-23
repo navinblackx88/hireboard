@@ -35,6 +35,7 @@ Open the hireflow service → **Variables** and add:
 | `JWT_ACCESS_SECRET` | `openssl rand -base64 48` | Signs access tokens |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | your admin login | Created on first start; **change the password from the default** |
 | `SEED_DEMO_DATA` | `true` | Optional: creates demo users and data on first start (skipped once users exist). Omit for an empty install |
+| `LOAD_SAMPLE_DATA` | (on by default) | Sample jobs and resumes from `samples/` load on the first deploy. Set `false` to skip (see "Sample data" below) |
 
 You don't need to set storage variables: the image defaults to `STORAGE_DRIVER=local` with `LOCAL_UPLOAD_DIR=/data/uploads` (the volume from step 3). Railway provides `PORT` and the app listens on it.
 
@@ -49,6 +50,22 @@ Service → **Settings → Networking → Generate Domain**. If Railway asks for
 Using a **custom domain**? Set `APP_URL` and `API_URL` to `https://your-domain` as well.
 
 Railway redeploys after variable changes. Open the domain and sign in with `admin@hireflow.dev` (admin), `nina@northwind.dev` (employer), `asha@example.dev` (candidate), password `password123` (when `SEED_DEMO_DATA=true`). **Change these passwords, or deploy without demo data, before sharing the URL.**
+
+## Sample data (loaded automatically)
+
+On the **first deploy**, the app loads `samples/` by itself: 6 published jobs from the fictional employer Lumora Technologies, and 18 applications from 12 sample resumes (PDF and Word). It happens at container start, after migrations and before the API comes up, and the scoring worker scores the applications straight away. Look for this line in the Deploy Logs:
+
+```
+Sample data loaded: 6 jobs and 18 applications from 12 candidates. Sign in as talent@lumora.example.com / password123.
+```
+
+Later deploys print `Sample data already loaded … skipping`, so nothing is duplicated, and sample jobs you delete stay deleted.
+
+- To **skip** it, set `LOAD_SAMPLE_DATA=false` before the first deploy.
+- To **remove** sample data later, delete the sample jobs, or start over on a fresh database.
+- The sample accounts' password is `password123`; set `SAMPLE_PASSWORD` before the first deploy to change it.
+
+This runs in the app container rather than as a Railway pre-deploy command, because pre-deploy commands run without the volume mounted and the resume files need to be stored on it. See `samples/README.md` for which resume should fit which job.
 
 ## Optional
 

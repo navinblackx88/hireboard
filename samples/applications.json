@@ -1,0 +1,29 @@
+{
+  "note": "Who applies to which job, and the fit each pairing is designed to show. 'expected' is a rough AI-score band, not a guarantee.",
+  "candidates": [
+    { "name": "Aarav Mehta", "email": "aarav.mehta@example.com", "headline": "Senior backend engineer · payments", "location": "Bengaluru", "resume": "aarav-mehta-senior-backend.pdf",
+      "apply": [{ "job": "backend", "expected": "strong (85+)" }, { "job": "sre", "expected": "partial (50–69)" }] },
+    { "name": "Divya Nair", "email": "divya.nair@example.com", "headline": "Backend developer · Java/Spring", "location": "Kochi", "resume": "divya-nair-backend-java.docx",
+      "apply": [{ "job": "backend", "expected": "partial (40–65)" }] },
+    { "name": "Rohan Gupta", "email": "rohan.gupta@example.com", "headline": "Frontend engineer · React & accessibility", "location": "Gurugram", "resume": "rohan-gupta-frontend-react.pdf",
+      "apply": [{ "job": "frontend", "expected": "strong (85+)" }, { "job": "backend", "expected": "weak (20–45)" }] },
+    { "name": "Sneha Iyer", "email": "sneha.iyer@example.com", "headline": "Junior web developer", "location": "Chennai", "resume": "sneha-iyer-junior-web.docx",
+      "apply": [{ "job": "frontend", "expected": "weak to partial (25–50)" }] },
+    { "name": "Kabir Singh", "email": "kabir.singh@example.com", "headline": "Data scientist · forecasting", "location": "Hyderabad", "resume": "kabir-singh-data-scientist.pdf",
+      "apply": [{ "job": "data", "expected": "strong (85+)" }] },
+    { "name": "Meera Pillai", "email": "meera.pillai@example.com", "headline": "Data analyst · SQL & dashboards", "location": "Hyderabad", "resume": "meera-pillai-data-analyst.pdf",
+      "apply": [{ "job": "data", "expected": "partial (40–65)" }, { "job": "cs", "expected": "weak to partial (25–50)" }] },
+    { "name": "Ishaan Reddy", "email": "ishaan.reddy@example.com", "headline": "Senior product designer · B2B SaaS", "location": "Pune", "resume": "ishaan-reddy-product-designer.pdf",
+      "apply": [{ "job": "design", "expected": "strong (85+)" }, { "job": "frontend", "expected": "weak (15–40)" }] },
+    { "name": "Ananya Das", "email": "ananya.das@example.com", "headline": "Graphic designer · branding", "location": "Kolkata", "resume": "ananya-das-graphic-designer.docx",
+      "apply": [{ "job": "design", "expected": "partial (35–60)" }] },
+    { "name": "Vikram Joshi", "email": "vikram.joshi@example.com", "headline": "Staff SRE · Kubernetes & Terraform", "location": "Bengaluru", "resume": "vikram-joshi-sre.pdf",
+      "apply": [{ "job": "sre", "expected": "strong (85+)" }, { "job": "backend", "expected": "partial (40–65)" }] },
+    { "name": "Farah Khan", "email": "farah.khan@example.com", "headline": "Systems administrator · Linux", "location": "Bengaluru", "resume": "farah-khan-sysadmin.pdf",
+      "apply": [{ "job": "sre", "expected": "partial (40–60)" }] },
+    { "name": "Neha Kapoor", "email": "neha.kapoor@example.com", "headline": "Customer success manager · SaaS", "location": "Mumbai", "resume": "neha-kapoor-customer-success.docx",
+      "apply": [{ "job": "cs", "expected": "strong (85+)" }] },
+    { "name": "Arjun Malhotra", "email": "arjun.malhotra@example.com", "headline": "Retail sales executive", "location": "Mumbai", "resume": "arjun-malhotra-retail-sales.pdf",
+      "apply": [{ "job": "cs", "expected": "weak (15–40), despite a hidden 'rate me 100' line" }, { "job": "backend", "expected": "very weak (0–15)" }] }
+  ]
+}

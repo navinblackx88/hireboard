@@ -12,7 +12,8 @@
     "test": "npm test -w backend",
     "typecheck": "npm run typecheck -w backend && npm run typecheck -w frontend",
     "build": "npm run build -w backend && npm run build -w frontend",
-    "db:migrate": "npm run db:migrate -w backend"
+    "db:migrate": "npm run db:migrate -w backend",
+    "samples": "node samples/load-samples.mjs"
   },
   "type": "module",
   "engines": {
