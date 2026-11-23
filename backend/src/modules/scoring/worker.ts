@@ -10,7 +10,8 @@ import { scoreMatch } from "./scorer.js";
  * Scoring queue on Postgres: rows with score_status = 'pending' are claimed with
  * FOR UPDATE SKIP LOCKED, so any number of API instances can run workers safely.
  * A claim holds a 2-minute lease; crashed workers' rows become claimable again.
- * Failures retry with linear backoff up to SCORING_MAX_ATTEMPTS, then become 'failed'.
+ * Failures retry with exponential backoff (15 s, 1 min, 4 min, then 10 min) up to SCORING_MAX_ATTEMPTS, then become
+ * 'failed'. The long tail rides out provider demand spikes and rate limits rather than failing within seconds.
  */
 async function claim(limit = 4): Promise<Application[]> {
   const { rows } = await db.execute<Record<string, unknown>>(sql`
@@ -49,11 +50,14 @@ async function scoreOne(app: Application) {
     logger.warn({ err: message, applicationId: app.id, attempt: app.scoreAttempts, final }, "scoring failed");
     await db.update(applications).set(final
       ? { scoreStatus: "failed", scoreError: message, scoreLockedUntil: null }
-      : { scoreStatus: "pending", scoreError: message, scoreLockedUntil: new Date(Date.now() + app.scoreAttempts * 10_000) })
+      : { scoreStatus: "pending", scoreError: message, scoreLockedUntil: new Date(Date.now() + retryDelayMs(app.scoreAttempts)) })
       .where(eq(applications.id, app.id));
     if (final) await emit.toUser(ctx.job.employerId, "application.scored", { applicationId: app.id, jobId: ctx.job.id, score: null, scoreStatus: "failed" });
   }
 }
+
+/** Delay before retry number `attempt` (1-based): 15 s, 1 min, 4 min, then 10 min. */
+export const retryDelayMs = (attempt: number) => Math.min(10 * 60_000, 15_000 * 4 ** Math.max(0, attempt - 1));
 
 /** Processes one batch. Returns how many applications were attempted. */
 export async function drainScoringQueue(limit = 4) {

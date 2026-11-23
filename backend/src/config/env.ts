@@ -34,13 +34,17 @@ const schema = z.object({
   ANTHROPIC_TIMEOUT_MS: z.coerce.number().default(60_000),
   GEMINI_API_KEY: z.string().optional(), // Google AI Studio key (aistudio.google.com → Get API key)
   GEMINI_MODEL: z.string().default("gemini-3.8-flash"),
+  // Tried in order when the model above is overloaded (503), rate-limited (429), erroring (5xx) or not available (404).
+  // Comma-separated; set to an empty string to turn fallback off.
+  GEMINI_FALLBACK_MODELS: z.string().default("gemini-3.7-flash,gemini-3.5-flash-lite")
+    .transform((s) => s.split(",").map((m) => m.trim()).filter(Boolean)),
   GEMINI_BASE_URL: z.string().optional(), // proxy, or a mock in tests
   GEMINI_TIMEOUT_MS: z.coerce.number().default(60_000),
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_BASE_URL: z.string().optional(), // Azure/OpenAI-compatible gateways, or a mock in tests
   OPENAI_MODEL: z.string().default("gpt-4.1-mini"),
   OPENAI_TIMEOUT_MS: z.coerce.number().default(45_000),
-  SCORING_MAX_ATTEMPTS: z.coerce.number().default(3),
+  SCORING_MAX_ATTEMPTS: z.coerce.number().default(5), // retries back off 15 s → 1 min → 4 min → 10 min
   SCORING_POLL_MS: z.coerce.number().default(2_000),
 
   STORAGE_DRIVER: z.enum(["s3", "local"]).default("local"),

@@ -12,7 +12,8 @@ export type Behaviour =
   | { kind: "truncated" };
 
 export function startMockOpenAI(port: number) {
-  const state = { behaviour: { kind: "score", score: 82 } as Behaviour, requests: [] as Record<string, any>[] };
+  // overloaded: Gemini model names that answer 503 "high demand", to exercise model fallback.
+  const state = { behaviour: { kind: "score", score: 82 } as Behaviour, requests: [] as Record<string, any>[], overloaded: new Set<string>() };
   const server = http.createServer((req, res) => {
     let raw = "";
     req.on("data", (c) => (raw += c));
@@ -24,7 +25,14 @@ export function startMockOpenAI(port: number) {
       state.requests.push({ ...body, url: req.url, authorization: req.headers.authorization, apiKey: req.headers["x-api-key"], googApiKey: req.headers["x-goog-api-key"], anthropicVersion: req.headers["anthropic-version"] });
       const b = state.behaviour;
       if (isClaude) { claudeReply(res, body, b); return; }
-      if (isGemini) { geminiReply(res, body, b); return; }
+      if (isGemini) {
+        const model = /models\/([^:/]+):generateContent/.exec(req.url ?? "")?.[1] ?? "unknown";
+        if (state.overloaded.has(model)) {
+          res.writeHead(503, { "Content-Type": "application/json" }).end(JSON.stringify({ error: { code: 503, message: "This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.", status: "UNAVAILABLE" } }));
+          return;
+        }
+        geminiReply(res, body, b, model); return;
+      }
       if (b.kind === "error") { res.writeHead(b.status, { "Content-Type": "application/json" }).end(JSON.stringify({ error: { message: "mock upstream failure", type: "server_error" } })); return; }
       // Score derived from the resume so different candidates get different scores.
       const user = body.messages.find((m: { role: string }) => m.role === "user").content as string;
@@ -74,7 +82,7 @@ function claudeReply(res: http.ServerResponse, body: any, b: Behaviour) {
 }
 
 /** Gemini generateContent response (structured output arrives as JSON text in the first candidate's part). */
-function geminiReply(res: http.ServerResponse, body: any, b: Behaviour) {
+function geminiReply(res: http.ServerResponse, body: any, b: Behaviour, model: string) {
   if (b.kind === "error") {
     res.writeHead(b.status, { "Content-Type": "application/json" }).end(JSON.stringify({ error: { code: b.status, message: "mock upstream failure", status: "INTERNAL" } }));
     return;
@@ -93,6 +101,6 @@ function geminiReply(res: http.ServerResponse, body: any, b: Behaviour) {
     : b.kind === "truncated" ? '{"score": 7' : undefined;
   res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({
     candidates: [{ content: { role: "model", parts: text ? [{ text }] : [] }, finishReason, index: 0 }],
-    modelVersion: "gemini-test", usageMetadata: { promptTokenCount: 100, candidatesTokenCount: 50, totalTokenCount: 150 },
+    modelVersion: model, usageMetadata: { promptTokenCount: 100, candidatesTokenCount: 50, totalTokenCount: 150 },
   }));
 }

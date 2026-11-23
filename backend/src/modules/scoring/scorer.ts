@@ -1,7 +1,8 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { GoogleGenAI } from "@google/genai";
+import { ApiError as GeminiApiError, GoogleGenAI } from "@google/genai";
 import OpenAI from "openai";
 import { env } from "../../config/env.js";
+import { logger } from "../../lib/logger.js";
 
 export type MatchInput = {
   jobTitle: string; company?: string; description: string; requirements?: string | null; skills?: string[]; experienceLevel?: string;
@@ -84,9 +85,29 @@ const gemini = () => (geminiClient ??= new GoogleGenAI({
   httpOptions: { timeout: env.GEMINI_TIMEOUT_MS, retryOptions: { attempts: 2, initialDelay: 0.5, maxDelay: 2 }, ...(env.GEMINI_BASE_URL ? { baseUrl: env.GEMINI_BASE_URL } : {}) },
 }));
 
+/** Errors where a different model may well succeed: overloaded, rate-limited, server error, or model not available. */
+const tryNextModel = (e: unknown) => e instanceof GeminiApiError && [404, 429, 500, 502, 503, 504].includes(e.status);
+
+/** Scores with GEMINI_MODEL, falling back through GEMINI_FALLBACK_MODELS when a model is busy or unavailable. */
 export async function scoreWithGemini(i: MatchInput): Promise<MatchResult> {
+  const models = [...new Set([env.GEMINI_MODEL, ...env.GEMINI_FALLBACK_MODELS])];
+  const tried: string[] = [];
+  for (const model of models) {
+    try {
+      return await scoreWithGeminiModel(i, model);
+    } catch (e) {
+      if (!tryNextModel(e)) throw e; // bad key, bad request, refusal, truncation: another model won't help
+      tried.push(`${model} (${(e as GeminiApiError).status})`);
+      logger.warn({ model, status: (e as GeminiApiError).status }, "Gemini model unavailable, trying the next one");
+      if (tried.length === models.length) throw new Error(`All Gemini models are busy or unavailable: ${tried.join(", ")}. Last error: ${(e as Error).message}`);
+    }
+  }
+  throw new Error("No Gemini model configured");
+}
+
+async function scoreWithGeminiModel(i: MatchInput, model: string): Promise<MatchResult> {
   const r = await gemini().models.generateContent({
-    model: env.GEMINI_MODEL,
+    model,
     contents: userPrompt(i),
     config: {
       systemInstruction: SYSTEM,
@@ -104,7 +125,7 @@ export async function scoreWithGemini(i: MatchInput): Promise<MatchResult> {
   if (finish && finish !== "STOP") throw new Error(`Model refused to score this resume (${finish})`);
   const text = r.text;
   if (!text?.trim()) throw new Error("Empty response from model");
-  return normalise(JSON.parse(text) as Omit<MatchResult, "provider">, `gemini:${r.modelVersion ?? env.GEMINI_MODEL}`);
+  return normalise(JSON.parse(text) as Omit<MatchResult, "provider">, `gemini:${r.modelVersion ?? model}`);
 }
 
 // ─── OpenAI ──────────────────────────────────────────────────────────────────

@@ -25,6 +25,7 @@ export default defineConfig({
       GEMINI_API_KEY: "gm-test",
       GEMINI_BASE_URL: `http://127.0.0.1:${MOCK_OPENAI_PORT}`,
       GEMINI_MODEL: "gemini-test",
+      GEMINI_FALLBACK_MODELS: "gemini-test-fallback",
       SCORING_MAX_ATTEMPTS: "2",
       ADMIN_EMAIL: "root@hireflow.test",
       ADMIN_PASSWORD: "admin-password-1",
