@@ -55,6 +55,7 @@ Railway redeploys after variable changes. Open the domain and sign in with `admi
 | Variable | Enables |
 |---|---|
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `EMAIL_FROM` | Real email (Resend, Postmark, SES, Brevo…). Without SMTP, emails are recorded (admin → Emails) and logged instead of sent. |
+| `GEMINI_API_KEY` (+ optional `GEMINI_MODEL`, default `gemini-3.8-flash`) | Free AI resume scoring with Gemini; get a key at **aistudio.google.com → Get API key**. Free tiers are rate-limited, and the provider may use free-tier data, so check its terms before scoring real candidates |
 | `ANTHROPIC_API_KEY` (+ optional `ANTHROPIC_MODEL`, default `claude-sonnet-5-5`) | AI resume scoring with Claude; without an AI key the built-in keyword scorer is used. Then use **Re-score with AI** on a job to upgrade existing scores |
 | `OPENAI_API_KEY` (+ `OPENAI_MODEL`) | Alternative AI provider, used only when no Anthropic key is set (or with `SCORING_PROVIDER=openai`) |
 

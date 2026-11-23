@@ -6,7 +6,7 @@ import { runMigrations } from "./db/migrate.js";
 import { logger } from "./lib/logger.js";
 import { closeRedis, redis } from "./lib/redis.js";
 import { ensureBootstrapAdmin } from "./modules/auth/auth.routes.js";
-import { activeModel, activeProvider, aiEnabled } from "./modules/scoring/scorer.js";
+import { PROVIDER_NAMES, activeModel, activeProvider, aiEnabled } from "./modules/scoring/scorer.js";
 import { setWorker, startScoringWorker } from "./modules/scoring/worker.js";
 import { closeAllStreams } from "./realtime/sse.js";
 
@@ -17,7 +17,7 @@ const worker = startScoringWorker();
 setWorker(worker);
 
 server.listen(env.PORT, () => {
-  logger.info(`API ${env.API_URL} · docs ${env.API_URL}/api/docs · redis ${redis ? "on" : "off"} · scoring ${aiEnabled() ? `${activeProvider() === "anthropic" ? "Claude" : "OpenAI"} (${activeModel()})` : "heuristic (set ANTHROPIC_API_KEY for AI scoring)"}`);
+  logger.info(`API ${env.API_URL} · docs ${env.API_URL}/api/docs · redis ${redis ? "on" : "off"} · scoring ${aiEnabled() ? `${PROVIDER_NAMES[activeProvider()]} (${activeModel()})` : "heuristic (set GEMINI_API_KEY or ANTHROPIC_API_KEY for AI scoring)"}`);
 });
 
 async function shutdown(sig: string) {

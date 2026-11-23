@@ -47,7 +47,7 @@ export const useApplication = (id?: string | null) => useQuery({ queryKey: ["app
 
 /** Which AI scorer the server uses (employers and admins only). */
 export const useScoringConfig = (enabled = true) =>
-  useQuery({ queryKey: ["scoringConfig"], queryFn: () => api<{ provider: "anthropic" | "openai" | "heuristic"; model: string | null }>("/scoring/config"), staleTime: 5 * 60_000, enabled });
+  useQuery({ queryKey: ["scoringConfig"], queryFn: () => api<{ provider: "anthropic" | "gemini" | "openai" | "heuristic"; model: string | null }>("/scoring/config"), staleTime: 5 * 60_000, enabled });
 
 export function useApplicationMutations() {
   const qc = useQueryClient();

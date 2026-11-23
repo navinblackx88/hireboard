@@ -46,7 +46,7 @@ export const scoreTone = (v: number) => (v >= 75
 export function providerLabel(p: string | null | undefined) {
   if (!p) return "AI";
   const [vendor, model] = p.split(":", 2);
-  const name = vendor === "anthropic" ? "Claude" : vendor === "openai" ? "OpenAI" : vendor;
+  const name = vendor === "anthropic" ? "Claude" : vendor === "gemini" ? "Gemini" : vendor === "openai" ? "OpenAI" : vendor;
   return model ? `${name} (${model})` : name;
 }
 
@@ -83,7 +83,7 @@ export function ScoreReasoning({ score }: { score: Score }) {
           {score.gaps.length ? <ul className="space-y-1">{score.gaps.map((s) => <li key={s} className="flex gap-1.5"><span className="mt-[7px] size-1.5 shrink-0 rounded-full bg-amber-500" />{s}</li>)}</ul> : <p className="text-muted-foreground">None identified</p>}
         </div>
       </div>
-      <p className="text-muted-foreground text-xs">{score.provider === "heuristic" ? "Keyword match. Set ANTHROPIC_API_KEY on the server for AI scoring." : `Scored by ${providerLabel(score.provider)}`}{score.scoredAt && ` · ${timeAgo(score.scoredAt)}`}. Use it to prioritise reading, not to decide.</p>
+      <p className="text-muted-foreground text-xs">{score.provider === "heuristic" ? "Keyword match. Set GEMINI_API_KEY or ANTHROPIC_API_KEY on the server for AI scoring." : `Scored by ${providerLabel(score.provider)}`}{score.scoredAt && ` · ${timeAgo(score.scoredAt)}`}. Use it to prioritise reading, not to decide.</p>
     </div>
   );
 }

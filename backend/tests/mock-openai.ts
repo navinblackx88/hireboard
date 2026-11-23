@@ -1,8 +1,8 @@
 import http from "node:http";
 
 /**
- * Stands in for api.openai.com/v1/chat/completions and api.anthropic.com/v1/messages, so the real OpenAI
- * and Anthropic SDK code paths are exercised.
+ * Stands in for OpenAI (/v1/chat/completions), Anthropic (/v1/messages) and Gemini (models/…:generateContent),
+ * so the real OpenAI, Anthropic and Google GenAI SDK code paths are exercised.
  * Tests set `behaviour` to control what comes back and inspect `requests` to see what was sent.
  */
 export type Behaviour =
@@ -18,11 +18,13 @@ export function startMockOpenAI(port: number) {
     req.on("data", (c) => (raw += c));
     req.on("end", () => {
       const isClaude = req.url?.endsWith("/v1/messages");
-      if (req.method !== "POST" || !(isClaude || req.url?.endsWith("/chat/completions"))) { res.writeHead(404).end(); return; }
+      const isGemini = req.url?.includes(":generateContent");
+      if (req.method !== "POST" || !(isClaude || isGemini || req.url?.endsWith("/chat/completions"))) { res.writeHead(404).end(); return; }
       const body = JSON.parse(raw);
-      state.requests.push({ ...body, authorization: req.headers.authorization, apiKey: req.headers["x-api-key"], anthropicVersion: req.headers["anthropic-version"] });
+      state.requests.push({ ...body, url: req.url, authorization: req.headers.authorization, apiKey: req.headers["x-api-key"], googApiKey: req.headers["x-goog-api-key"], anthropicVersion: req.headers["anthropic-version"] });
       const b = state.behaviour;
       if (isClaude) { claudeReply(res, body, b); return; }
+      if (isGemini) { geminiReply(res, body, b); return; }
       if (b.kind === "error") { res.writeHead(b.status, { "Content-Type": "application/json" }).end(JSON.stringify({ error: { message: "mock upstream failure", type: "server_error" } })); return; }
       // Score derived from the resume so different candidates get different scores.
       const user = body.messages.find((m: { role: string }) => m.role === "user").content as string;
@@ -68,5 +70,29 @@ function claudeReply(res: http.ServerResponse, body: any, b: Behaviour) {
   res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({
     id: "msg_mock", type: "message", role: "assistant", model: body.model, content, stop_reason, stop_sequence: null,
     usage: { input_tokens: 100, output_tokens: 50 },
+  }));
+}
+
+/** Gemini generateContent response (structured output arrives as JSON text in the first candidate's part). */
+function geminiReply(res: http.ServerResponse, body: any, b: Behaviour) {
+  if (b.kind === "error") {
+    res.writeHead(b.status, { "Content-Type": "application/json" }).end(JSON.stringify({ error: { code: b.status, message: "mock upstream failure", status: "INTERNAL" } }));
+    return;
+  }
+  const user = body.contents?.[0]?.parts?.[0]?.text ?? "";
+  const resume = /<resume>([\s\S]*)<\/resume>/.exec(user)?.[1] ?? "";
+  const kw = (resume.match(/kubernetes|postgresql|typescript|aws/gi) ?? []).length;
+  const finishReason = b.kind === "refusal" ? "SAFETY" : b.kind === "truncated" ? "MAX_TOKENS" : "STOP";
+  const text = b.kind === "score"
+    ? JSON.stringify({
+        score: b.score === -1 ? 40 + kw * 7 : b.score,
+        summary: b.summary ?? "Strong backend match with relevant cloud experience.",
+        strengths: b.strengths ?? ["TypeScript and Node.js APIs", "AWS microservices"],
+        gaps: b.gaps ?? ["No Kubernetes in production"],
+      })
+    : b.kind === "truncated" ? '{"score": 7' : undefined;
+  res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({
+    candidates: [{ content: { role: "model", parts: text ? [{ text }] : [] }, finishReason, index: 0 }],
+    modelVersion: "gemini-test", usageMetadata: { promptTokenCount: 100, candidatesTokenCount: 50, totalTokenCount: 150 },
   }));
 }

@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { GoogleGenAI } from "@google/genai";
 import OpenAI from "openai";
 import { env } from "../../config/env.js";
 
@@ -75,6 +76,37 @@ export async function scoreWithClaude(i: MatchInput): Promise<MatchResult> {
   return normalise(JSON.parse(text.text) as Omit<MatchResult, "provider">, `anthropic:${msg.model ?? env.ANTHROPIC_MODEL}`);
 }
 
+// ─── Gemini (Google AI Studio) ───────────────────────────────────────────────
+let geminiClient: GoogleGenAI | null = null;
+const gemini = () => (geminiClient ??= new GoogleGenAI({
+  apiKey: env.GEMINI_API_KEY,
+  // One quick retry here; the scoring queue retries with backoff beyond that (as for the other providers).
+  httpOptions: { timeout: env.GEMINI_TIMEOUT_MS, retryOptions: { attempts: 2, initialDelay: 0.5, maxDelay: 2 }, ...(env.GEMINI_BASE_URL ? { baseUrl: env.GEMINI_BASE_URL } : {}) },
+}));
+
+export async function scoreWithGemini(i: MatchInput): Promise<MatchResult> {
+  const r = await gemini().models.generateContent({
+    model: env.GEMINI_MODEL,
+    contents: userPrompt(i),
+    config: {
+      systemInstruction: SYSTEM,
+      // Structured output: the reply is JSON constrained to SCHEMA.
+      responseMimeType: "application/json",
+      responseJsonSchema: SCHEMA,
+      temperature: 0,
+      maxOutputTokens: 8192, // thinking models spend part of this before answering
+    },
+  });
+  const blocked = r.promptFeedback?.blockReason;
+  if (blocked) throw new Error(`Model refused to score this resume (blocked: ${blocked})`);
+  const finish = r.candidates?.[0]?.finishReason;
+  if (finish === "MAX_TOKENS") throw new Error("Model response was cut off (max_tokens)");
+  if (finish && finish !== "STOP") throw new Error(`Model refused to score this resume (${finish})`);
+  const text = r.text;
+  if (!text?.trim()) throw new Error("Empty response from model");
+  return normalise(JSON.parse(text) as Omit<MatchResult, "provider">, `gemini:${r.modelVersion ?? env.GEMINI_MODEL}`);
+}
+
 // ─── OpenAI ──────────────────────────────────────────────────────────────────
 async function scoreWithOpenAI(i: MatchInput): Promise<MatchResult> {
 
@@ -133,16 +165,20 @@ export function scoreHeuristically(i: MatchInput): MatchResult {
   };
 }
 
-export type Provider = "anthropic" | "openai" | "heuristic";
-/** Which scorer runs: SCORING_PROVIDER when set explicitly, otherwise Claude → OpenAI → keyword, by which key exists. */
-export function pickProvider(c: { SCORING_PROVIDER: typeof env.SCORING_PROVIDER; ANTHROPIC_API_KEY?: string; OPENAI_API_KEY?: string }): Provider {
+export type Provider = "anthropic" | "gemini" | "openai" | "heuristic";
+/** Which scorer runs: SCORING_PROVIDER when set explicitly, otherwise Claude → Gemini → OpenAI → keyword, by which key exists. */
+export function pickProvider(c: { SCORING_PROVIDER: typeof env.SCORING_PROVIDER; ANTHROPIC_API_KEY?: string; GEMINI_API_KEY?: string; OPENAI_API_KEY?: string }): Provider {
   if (c.SCORING_PROVIDER !== "auto") return c.SCORING_PROVIDER;
-  return c.ANTHROPIC_API_KEY ? "anthropic" : c.OPENAI_API_KEY ? "openai" : "heuristic";
+  return c.ANTHROPIC_API_KEY ? "anthropic" : c.GEMINI_API_KEY ? "gemini" : c.OPENAI_API_KEY ? "openai" : "heuristic";
 }
 export const activeProvider = () => pickProvider(env);
 export const aiEnabled = () => activeProvider() !== "heuristic";
-export const activeModel = () => ({ anthropic: env.ANTHROPIC_MODEL, openai: env.OPENAI_MODEL, heuristic: null })[activeProvider()];
+export const activeModel = () => ({ anthropic: env.ANTHROPIC_MODEL, gemini: env.GEMINI_MODEL, openai: env.OPENAI_MODEL, heuristic: null })[activeProvider()];
+export const PROVIDER_NAMES: Record<Provider, string> = { anthropic: "Claude", gemini: "Gemini", openai: "OpenAI", heuristic: "keyword" };
 export function scoreMatch(i: MatchInput): Promise<MatchResult> {
   const p = activeProvider();
-  return p === "anthropic" ? scoreWithClaude(i) : p === "openai" ? scoreWithOpenAI(i) : Promise.resolve(scoreHeuristically(i));
+  if (p === "anthropic") return scoreWithClaude(i);
+  if (p === "gemini") return scoreWithGemini(i);
+  if (p === "openai") return scoreWithOpenAI(i);
+  return Promise.resolve(scoreHeuristically(i));
 }

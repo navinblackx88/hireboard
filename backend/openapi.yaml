@@ -550,7 +550,7 @@ paths:
       responses:
         "200":
           description: OK
-          content: { application/json: { schema: { type: object, properties: { provider: { type: string, enum: [anthropic, openai, heuristic] }, model: { type: string, nullable: true } } } } }
+          content: { application/json: { schema: { type: object, properties: { provider: { type: string, enum: [anthropic, gemini, openai, heuristic] }, model: { type: string, nullable: true } } } } }
   /scoring/match:
     post:
       tags: [AI Scoring]

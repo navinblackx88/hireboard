@@ -24,14 +24,18 @@ const schema = z.object({
   ADMIN_EMAIL: z.string().optional(),
   ADMIN_PASSWORD: z.string().optional(),
 
-  // AI resume scoring. "auto" picks Claude when ANTHROPIC_API_KEY is set, else OpenAI when OPENAI_API_KEY is set,
-  // else the built-in keyword scorer (clearly labelled).
-  SCORING_PROVIDER: z.enum(["auto", "anthropic", "openai", "heuristic"]).default("auto"),
+  // AI resume scoring. "auto" picks the first provider with a key: Claude (ANTHROPIC_API_KEY), then Gemini
+  // (GEMINI_API_KEY, from Google AI Studio), then OpenAI (OPENAI_API_KEY); with none, the keyword scorer (clearly labelled).
+  SCORING_PROVIDER: z.enum(["auto", "anthropic", "gemini", "openai", "heuristic"]).default("auto"),
   ANTHROPIC_API_KEY: z.string().optional(),
   ANTHROPIC_MODEL: z.string().default("claude-sonnet-5-5"),
   ANTHROPIC_EFFORT: z.enum(["low", "medium", "high"]).default("medium"),
   ANTHROPIC_BASE_URL: z.string().optional(), // gateway/proxy, or a mock in tests
   ANTHROPIC_TIMEOUT_MS: z.coerce.number().default(60_000),
+  GEMINI_API_KEY: z.string().optional(), // Google AI Studio key (aistudio.google.com → Get API key)
+  GEMINI_MODEL: z.string().default("gemini-3.8-flash"),
+  GEMINI_BASE_URL: z.string().optional(), // proxy, or a mock in tests
+  GEMINI_TIMEOUT_MS: z.coerce.number().default(60_000),
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_BASE_URL: z.string().optional(), // Azure/OpenAI-compatible gateways, or a mock in tests
   OPENAI_MODEL: z.string().default("gpt-4.1-mini"),
@@ -67,6 +71,7 @@ if (!parsed.success) {
 }
 export const env = parsed.data;
 if (env.SCORING_PROVIDER === "anthropic" && !env.ANTHROPIC_API_KEY) throw new Error("SCORING_PROVIDER=anthropic needs ANTHROPIC_API_KEY");
+if (env.SCORING_PROVIDER === "gemini" && !env.GEMINI_API_KEY) throw new Error("SCORING_PROVIDER=gemini needs GEMINI_API_KEY (from aistudio.google.com)");
 if (env.SCORING_PROVIDER === "openai" && !env.OPENAI_API_KEY) throw new Error("SCORING_PROVIDER=openai needs OPENAI_API_KEY");
 if (env.NODE_ENV === "production" && !process.env.DATABASE_URL) {
   throw new Error("Set DATABASE_URL in production (Railway: service → Variables → DATABASE_URL=${{Postgres.DATABASE_URL}})");
