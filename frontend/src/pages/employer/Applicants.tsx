@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import { AlertTriangle, ArrowLeft, Download, Lock, Pencil, RefreshCw, Users } from "lucide-react";
-import { openFile, useApplicants, useApplication, useApplicationMutations, useJob, useJobMutations } from "@/hooks/api";
+import { AlertTriangle, ArrowLeft, Download, Lock, Pencil, RefreshCw, Sparkles, Users } from "lucide-react";
+import { openFile, useApplicants, useApplication, useApplicationMutations, useJob, useJobMutations, useScoringConfig } from "@/hooks/api";
 import { fmtDate, timeAgo } from "@/lib/format";
 import { APP_STATUS_LABEL, type ApplicationStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -17,7 +17,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { AppStatusBadge, JobStatusBadge, Pagination, ScoreBadge, ScoreReasoning, Timeline } from "@/components/hire";
+import { AppStatusBadge, JobStatusBadge, Pagination, ScoreBadge, ScoreReasoning, Timeline, providerLabel } from "@/components/hire";
 import { Page } from "@/components/Layout";
 import { EmptyState, ErrorState, Field, PageSpinner, UserAvatar, confirmAction } from "@/components/common";
 
@@ -36,6 +36,9 @@ export default function Applicants() {
   const { id = "" } = useParams();
   const job = useJob(id);
   const jm = useJobMutations();
+  const am = useApplicationMutations();
+  const scoring = useScoringConfig();
+  const ai = scoring.data && scoring.data.provider !== "heuristic" ? providerLabel(`${scoring.data.provider}:${scoring.data.model ?? ""}`) : null;
   const [params, setParams] = useSearchParams();
   const tab = params.get("tab") ?? "all";
   const page = Number(params.get("page") ?? 1);
@@ -57,6 +60,15 @@ export default function Applicants() {
       title={j.title}
       subtitle={<span className="flex flex-wrap items-center gap-2"><JobStatusBadge status={j.status} />{j.location} · posted {j.publishedAt ? fmtDate(j.publishedAt) : "—"}</span>}
       actions={<>
+        {ai && (j.applicantCount ?? 0) > 0 && (
+          <Button variant="outline" disabled={am.rescoreJob.isPending} onClick={async () => (await confirmAction({
+            title: "Re-score applicants with AI?",
+            description: `Applicants scored by keyword match (or whose scoring failed) will be re-scored by ${ai}. This uses your AI provider's API credits.`,
+            confirmLabel: "Re-score",
+          })) && am.rescoreJob.mutate({ jobId: j.id, scope: "keyword" })}>
+            {am.rescoreJob.isPending ? <Spinner /> : <Sparkles />}Re-score with AI
+          </Button>
+        )}
         <Button variant="outline" asChild><Link to={`/jobs/${j.id}`}>View posting</Link></Button>
         {j.status !== "closed" && <Button variant="outline" asChild><Link to={`/employer/jobs/${j.id}/edit`}><Pencil />Edit</Link></Button>}
         {j.status === "published" && (

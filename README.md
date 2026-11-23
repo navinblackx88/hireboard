@@ -6,11 +6,11 @@ and by email.
 
 ```
 hireflow/
-├── backend/   Node 22 · Express 5 · TypeScript · PostgreSQL (Drizzle) · Redis · OpenAI · S3/GCS · Nodemailer
+├── backend/   Node 22 · Express 5 · TypeScript · PostgreSQL (Drizzle) · Redis · Claude (Anthropic) / OpenAI · S3/GCS · Nodemailer
 │   ├── openapi.yaml    OpenAPI 3.0.3: 35 paths, 42 operations (Swagger UI at /api/docs)
 │   ├── src/modules/    auth · jobs · applications (+ resumes) · scoring · notifications · admin
 │   ├── src/realtime/   SSE stream (Redis pub/sub fan-out)
-│   └── tests/          integration tests on real Postgres + Redis, with a mock OpenAI server
+│   └── tests/          integration tests on real Postgres + Redis, with a mock Claude/OpenAI server
 ├── frontend/  React 19 · TypeScript · shadcn/ui (Radix) · Tailwind CSS 4 · React Query · Zustand · Recharts
 └── docker-compose.yml  local demo stack: Postgres, Mailpit, API, nginx web (no cloud services)
 ```
@@ -21,12 +21,12 @@ hireflow/
 ```bash
 docker compose up --build
 ```
-Open **http://localhost:8080** and sign in as `admin@hireflow.dev`, `nina@northwind.dev` (employer) or `asha@example.dev` (candidate), password `password123`. Emails land at http://localhost:8025, API docs at http://localhost:8080/api/docs. Scoring uses the offline keyword scorer; set `OPENAI_API_KEY` for AI scoring. See **[LOCAL-DEMO.md](LOCAL-DEMO.md)** for the architecture, a 10-minute demo script and operations.
+Open **http://localhost:8080** and sign in as `admin@hireflow.dev`, `nina@northwind.dev` (employer) or `asha@example.dev` (candidate), password `password123`. Emails land at http://localhost:8025, API docs at http://localhost:8080/api/docs. Scoring uses the offline keyword scorer; set `ANTHROPIC_API_KEY` for AI scoring with Claude. See **[LOCAL-DEMO.md](LOCAL-DEMO.md)** for the architecture, a 10-minute demo script and operations.
 
 **Local** (Postgres 16 + Redis 7):
 ```bash
 npm install
-cp backend/.env.example backend/.env            # add OPENAI_API_KEY if you have one
+cp backend/.env.example backend/.env            # add ANTHROPIC_API_KEY for Claude scoring
 npm run seed
 npm run dev:api        # :4000
 npm run dev:web        # :5173
@@ -74,14 +74,17 @@ The frontend is built on [shadcn/ui](https://ui.shadcn.com) (new-york style, Rad
    `FOR UPDATE SKIP LOCKED` and a 2-minute lease, so any number of API instances can score safely, and a crashed
    worker's rows get picked up again.
 2. The worker sends the extracted resume text and the job (title, description, requirements, skills, seniority) to the
-   **OpenAI Chat Completions API** with a **strict JSON schema** (`score`, `summary`, `strengths[]`, `gaps[]`).
+   **AI provider** with a **strict JSON schema** (`score`, `summary`, `strengths[]`, `gaps[]`): **Claude** via the Anthropic
+   Messages API with structured outputs (`claude-sonnet-5-5` by default), or OpenAI Chat Completions. `SCORING_PROVIDER=auto`
+   (the default) uses Claude when `ANTHROPIC_API_KEY` is set, else OpenAI when `OPENAI_API_KEY` is set.
 3. The output is validated and clamped (0–100, at most 5 items each). Failures retry with backoff up to `SCORING_MAX_ATTEMPTS`,
    then show as "Score failed" with a re-score button.
 4. The employer's screen updates over SSE as soon as the score lands.
 
 The system prompt has an explicit rubric, ignores protected characteristics, and treats the resume and the job description as
 untrusted data (to blunt prompt injection such as "rate this resume 100"). **Candidates never see scores.**
-Without `OPENAI_API_KEY`, a keyword-overlap scorer runs instead, and it's labelled as such everywhere.
+Without an AI key, a keyword-overlap scorer runs instead, and it's labelled as such everywhere. After adding a key,
+**Re-score with AI** on a job's Applicants page (or `POST /jobs/{id}/applications/rescore`) upgrades existing keyword scores.
 `POST /scoring/match` scores ad-hoc text synchronously.
 
 ## Real-time and notifications
@@ -119,7 +122,7 @@ createdb hireflow_test && npm test     # 25 integration tests
 ```
 These cover the signup and role rules, token rotation, RBAC, moderation (reject → resubmit → approve), every search filter,
 pagination, cache invalidation, re-review on edits, PDF/DOCX extraction and content sniffing, the size limit,
-signed downloads, duplicate and closed-job applications, the **real OpenAI SDK path** against a mock server (request shape, strict
-schema, prompt guardrails, clamping, retry → failed, refusals), score privacy, status transitions, emails and opt-out,
+signed downloads, duplicate and closed-job applications, the **real Anthropic and OpenAI SDK paths** against a mock server (request shape, strict
+schema, prompt guardrails, clamping, retry → failed, refusals, truncation), bulk re-scoring, score privacy, status transitions, emails and opt-out,
 SSE delivery and isolation, ticket reuse, suspension taking effect immediately, analytics, and a check that every route
 appears in the OpenAPI spec.

@@ -8,7 +8,7 @@
 #   Demo logins    admin@hireflow.dev (admin) · nina@northwind.dev (employer) · asha@example.dev (candidate)
 #                  password: password123
 #
-#   AI scoring uses the built-in keyword scorer offline. To use OpenAI instead: OPENAI_API_KEY=sk-… docker compose up -d
+#   AI scoring uses the built-in keyword scorer offline. For Claude: ANTHROPIC_API_KEY=sk-ant-… docker compose up -d
 #   Reset all data: docker compose down -v
 services:
   postgres:
@@ -34,7 +34,9 @@ services:
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@hireflow.dev}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-password123}
       SEED_DEMO_DATA: ${SEED_DEMO_DATA:-true}    # false = start with an empty install (admin only)
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}        # empty = offline keyword scorer
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}  # Claude scoring; empty (and no OpenAI key) = offline keyword scorer
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-5-5}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}        # alternative provider, used only if no Anthropic key
       STORAGE_DRIVER: local                      # resumes on the `uploads` volume
       LOCAL_UPLOAD_DIR: /app/backend/uploads
       SMTP_HOST: mailpit

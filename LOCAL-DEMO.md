@@ -67,7 +67,7 @@ Only two ports are published. The database is reachable only from inside the Com
 |---|---|---|
 | **No Redis** in the demo | One API instance means SSE fan-out and rate limits can stay in memory. The app detects `REDIS_URL` unset and falls back automatically. | Add Redis with `REDIS_URL`. Pub/sub then fans events out across N API replicas. |
 | **Postgres as the job queue** | Durable retries without another broker. Jobs survive restarts, and `SKIP LOCKED` makes multiple workers safe. | Same, or move to a dedicated queue at high volume. |
-| **Offline keyword scorer** by default | Demo works with no keys and no internet, and is deterministic. | Set `OPENAI_API_KEY` and the LLM scorer is used; failed calls are retried by the queue. |
+| **Offline keyword scorer** by default | Demo works with no keys and no internet, and is deterministic. | Set `ANTHROPIC_API_KEY` and Claude scores resumes (OpenAI is also supported); failed calls are retried by the queue. |
 | **Local volume storage** for resumes | Removes the object-store dependency. Downloads are short-lived signed URLs served by the API, so the access model is the same. | `STORAGE_DRIVER=s3` (S3, R2, GCS). No code change. |
 | **nginx single origin** | No CORS. The frontend is built with `VITE_API_URL=""`, so the same image works on any host. SSE gets an unbuffered location. | Same pattern behind a load balancer or CDN. |
 | **Mailpit** | Real SMTP path exercised end to end; nothing leaves the machine. | Any SMTP provider via `SMTP_*`. |
@@ -104,7 +104,8 @@ Optional settings (put them in a `.env` file next to `docker-compose.yml`, or ex
 
 | Variable | Default | Effect |
 |---|---|---|
-| `OPENAI_API_KEY` | empty | Enables LLM scoring (this is the only setting that needs internet) |
+| `ANTHROPIC_API_KEY` | empty | Enables AI scoring with Claude (this is the only setting that needs internet) |
+| `ANTHROPIC_MODEL` | `claude-sonnet-5-5` | `claude-haiku-5-5` is cheaper and faster |
 | `SEED_DEMO_DATA` | `true` | `false` = empty install with the admin only |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | admin@hireflow.dev / password123 | Bootstrap admin |
 | `JWT_ACCESS_SECRET` | demo value | Change it for anything beyond a local demo |
@@ -123,7 +124,7 @@ Optional settings (put them in a `.env` file next to `docker-compose.yml`, or ex
 
 1. Add **Redis** (`REDIS_URL`) and run 2+ `api` replicas behind the proxy. SSE and rate limits become cluster-wide.
 2. Switch storage to **S3-compatible** (`STORAGE_DRIVER=s3`) and Postgres to a managed instance with backups.
-3. Set `OPENAI_API_KEY` for AI scoring and a real SMTP provider.
+3. Set `ANTHROPIC_API_KEY` for AI scoring with Claude, and a real SMTP provider.
 4. Put TLS in front, using nginx or a load balancer.
 
 To host it in the cloud, deploy the same codebase to Railway; see `DEPLOY-RAILWAY.md`.

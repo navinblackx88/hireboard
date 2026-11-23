@@ -45,6 +45,10 @@ export const useApplicants = (jobId: string, q: Q) => useQuery({
 export const useMyApplications = (q: Q) => useQuery({ queryKey: ["myApplications", q], queryFn: () => api<Paged<MyApplication> & { counts: Partial<Record<ApplicationStatus, number>> }>("/applications/me", { query: q }), placeholderData: keepPreviousData });
 export const useApplication = (id?: string | null) => useQuery({ queryKey: ["application", id], queryFn: () => api<ApplicationDetail>(`/applications/${id}`), enabled: !!id });
 
+/** Which AI scorer the server uses (employers and admins only). */
+export const useScoringConfig = (enabled = true) =>
+  useQuery({ queryKey: ["scoringConfig"], queryFn: () => api<{ provider: "anthropic" | "openai" | "heuristic"; model: string | null }>("/scoring/config"), staleTime: 5 * 60_000, enabled });
+
 export function useApplicationMutations() {
   const qc = useQueryClient();
   const refresh = (id?: string) => { qc.invalidateQueries({ queryKey: ["applicants"] }); qc.invalidateQueries({ queryKey: ["myApplications"] }); qc.invalidateQueries({ queryKey: ["employerStats"] }); qc.invalidateQueries({ queryKey: ["employerJobs"] }); if (id) qc.invalidateQueries({ queryKey: ["application", id] }); };
@@ -57,6 +61,15 @@ export function useApplicationMutations() {
     setStatus: useMutation({ mutationFn: ({ id, ...b }: { id: string; status: ApplicationStatus; note?: string }) => api(`/applications/${id}/status`, { method: "PATCH", body: b }), onSuccess: (_r, v) => refresh(v.id), onError: fail("Couldn't update the status") }),
     withdraw: useMutation({ mutationFn: (id: string) => api(`/applications/${id}/withdraw`, { method: "POST" }), onSuccess: (_r, id) => { refresh(id); toast.success("Application withdrawn"); }, onError: fail("Couldn't withdraw") }),
     rescore: useMutation({ mutationFn: (id: string) => api(`/applications/${id}/rescore`, { method: "POST" }), onSuccess: (_r, id) => { refresh(id); toast.info("Re-scoring started"); }, onError: fail("Couldn't re-score") }),
+    rescoreJob: useMutation({
+      mutationFn: ({ jobId, scope }: { jobId: string; scope: "keyword" | "all" }) => api<{ queued: number }>(`/jobs/${jobId}/applications/rescore`, { body: { scope } }),
+      onSuccess: (r) => {
+        refresh();
+        if (r.queued) toast.info(`Re-scoring ${r.queued} applicant${r.queued === 1 ? "" : "s"} with AI`, "Scores update here as each one finishes.");
+        else toast.info("Nothing to re-score", "Every applicant already has an AI score.");
+      },
+      onError: fail("Couldn't start re-scoring"),
+    }),
   };
 }
 

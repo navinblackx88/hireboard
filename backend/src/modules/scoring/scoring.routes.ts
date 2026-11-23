@@ -8,13 +8,13 @@ import { jobs } from "../../db/schema.js";
 import { me } from "../../lib/auth.js";
 import { HttpError, notFound } from "../../lib/errors.js";
 import { body } from "../../lib/validate.js";
-import { aiEnabled, scoreMatch } from "./scorer.js";
+import { activeModel, activeProvider, scoreMatch } from "./scorer.js";
 
 export const scoringRouter = Router();
 const limiter = rateLimit({ windowMs: 60_000, limit: env.NODE_ENV === "test" ? 10_000 : 20, standardHeaders: "draft-8", legacyHeaders: false });
 
 scoringRouter.get("/config", (_req, res) => {
-  res.json({ provider: aiEnabled() ? "openai" : "heuristic", model: aiEnabled() ? env.OPENAI_MODEL : null });
+  res.json({ provider: activeProvider(), model: activeModel() });
 });
 
 /**

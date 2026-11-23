@@ -421,6 +421,22 @@ paths:
       responses:
         "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/StatusChange" } } } }
         "400": { $ref: "#/components/responses/BadRequest" }
+  /jobs/{id}/applications/rescore:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    post:
+      tags: [AI Scoring]
+      summary: Re-score a job's applications in bulk (job owner or admin)
+      description: >
+        `scope: keyword` (default) re-queues applications scored by the keyword scorer or whose scoring failed, for
+        example after `OPENAI_API_KEY` is added; it returns 400 if AI scoring isn't configured. `scope: all` re-queues
+        every application except withdrawn ones.
+      requestBody:
+        required: false
+        content: { application/json: { schema: { type: object, properties: { scope: { type: string, enum: [keyword, all], default: keyword } } } } }
+      responses:
+        "202": { description: Queued, content: { application/json: { schema: { type: object, properties: { queued: { type: integer } } } } } }
+        "400": { description: AI scoring isn't configured }
+        "404": { description: Job not found or not yours }
   /applications/{id}/rescore:
     parameters: [{ $ref: "#/components/parameters/id" }]
     post:
@@ -534,7 +550,7 @@ paths:
       responses:
         "200":
           description: OK
-          content: { application/json: { schema: { type: object, properties: { provider: { type: string, enum: [openai, heuristic] }, model: { type: string, nullable: true } } } } }
+          content: { application/json: { schema: { type: object, properties: { provider: { type: string, enum: [anthropic, openai, heuristic] }, model: { type: string, nullable: true } } } } }
   /scoring/match:
     post:
       tags: [AI Scoring]

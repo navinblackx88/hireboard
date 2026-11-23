@@ -1,3 +1,4 @@
+import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 import { env } from "../../config/env.js";
 
@@ -10,7 +11,7 @@ export type MatchResult = { score: number; summary: string; strengths: string[];
 const MAX_RESUME = 14_000, MAX_JD = 8_000;
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}\n[truncated]` : s);
 
-// ─── OpenAI ──────────────────────────────────────────────────────────────────
+// ─── Shared prompt and output schema ─────────────────────────────────────────
 const SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -41,7 +42,8 @@ Rules:
 let client: OpenAI | null = null;
 const openai = () => (client ??= new OpenAI({ apiKey: env.OPENAI_API_KEY, baseURL: env.OPENAI_BASE_URL, timeout: env.OPENAI_TIMEOUT_MS, maxRetries: 1 }));
 
-async function scoreWithOpenAI(i: MatchInput): Promise<MatchResult> {
+/** The job and resume as one user message; both are wrapped in tags and treated as untrusted data. */
+function userPrompt(i: MatchInput) {
   const jd = clip([
     `Title: ${i.jobTitle}${i.company ? ` at ${i.company}` : ""}`,
     i.experienceLevel ? `Seniority: ${i.experienceLevel}` : "",
@@ -49,12 +51,38 @@ async function scoreWithOpenAI(i: MatchInput): Promise<MatchResult> {
     `Description:\n${i.description}`,
     i.requirements ? `Requirements:\n${i.requirements}` : "",
   ].filter(Boolean).join("\n\n"), MAX_JD);
+  return `<job_description>\n${jd}\n</job_description>\n\n<resume>\n${clip(i.resumeText, MAX_RESUME)}\n</resume>`;
+}
+
+// ─── Claude (Anthropic) ──────────────────────────────────────────────────────
+let anthropicClient: Anthropic | null = null;
+const anthropic = () => (anthropicClient ??= new Anthropic({ apiKey: env.ANTHROPIC_API_KEY, baseURL: env.ANTHROPIC_BASE_URL, timeout: env.ANTHROPIC_TIMEOUT_MS, maxRetries: 1 }));
+
+export async function scoreWithClaude(i: MatchInput): Promise<MatchResult> {
+  const msg = await anthropic().messages.create({
+    model: env.ANTHROPIC_MODEL,
+    // Adaptive thinking counts toward max_tokens, so leave room beyond the small JSON answer.
+    max_tokens: 8000,
+    system: SYSTEM,
+    messages: [{ role: "user", content: userPrompt(i) }],
+    // Structured outputs: the reply is guaranteed to be JSON matching SCHEMA.
+    output_config: { format: { type: "json_schema", schema: SCHEMA as unknown as Record<string, unknown> }, effort: env.ANTHROPIC_EFFORT },
+  });
+  if (msg.stop_reason === "refusal") throw new Error("Model refused to score this resume");
+  if (msg.stop_reason === "max_tokens") throw new Error("Model response was cut off (max_tokens)");
+  const text = msg.content.find((b) => b.type === "text");
+  if (!text || text.type !== "text" || !text.text.trim()) throw new Error("Empty response from model");
+  return normalise(JSON.parse(text.text) as Omit<MatchResult, "provider">, `anthropic:${msg.model ?? env.ANTHROPIC_MODEL}`);
+}
+
+// ─── OpenAI ──────────────────────────────────────────────────────────────────
+async function scoreWithOpenAI(i: MatchInput): Promise<MatchResult> {
 
   const completion = await openai().chat.completions.create({
     model: env.OPENAI_MODEL,
     messages: [
       { role: "system", content: SYSTEM },
-      { role: "user", content: `<job_description>\n${jd}\n</job_description>\n\n<resume>\n${clip(i.resumeText, MAX_RESUME)}\n</resume>` },
+      { role: "user", content: userPrompt(i) },
     ],
     response_format: { type: "json_schema", json_schema: { name: "resume_match", strict: true, schema: SCHEMA } },
   });
@@ -105,5 +133,16 @@ export function scoreHeuristically(i: MatchInput): MatchResult {
   };
 }
 
-export const aiEnabled = () => Boolean(env.OPENAI_API_KEY);
-export const scoreMatch = (i: MatchInput) => (aiEnabled() ? scoreWithOpenAI(i) : Promise.resolve(scoreHeuristically(i)));
+export type Provider = "anthropic" | "openai" | "heuristic";
+/** Which scorer runs: SCORING_PROVIDER when set explicitly, otherwise Claude → OpenAI → keyword, by which key exists. */
+export function pickProvider(c: { SCORING_PROVIDER: typeof env.SCORING_PROVIDER; ANTHROPIC_API_KEY?: string; OPENAI_API_KEY?: string }): Provider {
+  if (c.SCORING_PROVIDER !== "auto") return c.SCORING_PROVIDER;
+  return c.ANTHROPIC_API_KEY ? "anthropic" : c.OPENAI_API_KEY ? "openai" : "heuristic";
+}
+export const activeProvider = () => pickProvider(env);
+export const aiEnabled = () => activeProvider() !== "heuristic";
+export const activeModel = () => ({ anthropic: env.ANTHROPIC_MODEL, openai: env.OPENAI_MODEL, heuristic: null })[activeProvider()];
+export function scoreMatch(i: MatchInput): Promise<MatchResult> {
+  const p = activeProvider();
+  return p === "anthropic" ? scoreWithClaude(i) : p === "openai" ? scoreWithOpenAI(i) : Promise.resolve(scoreHeuristically(i));
+}

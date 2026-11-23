@@ -55,7 +55,8 @@ Railway redeploys after variable changes. Open the domain and sign in with `admi
 | Variable | Enables |
 |---|---|
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `EMAIL_FROM` | Real email (Resend, Postmark, SES, Brevo…). Without SMTP, emails are recorded (admin → Emails) and logged instead of sent. |
-| `OPENAI_API_KEY` (+ `OPENAI_MODEL`) | AI resume scoring; without it the built-in keyword scorer is used |
+| `ANTHROPIC_API_KEY` (+ optional `ANTHROPIC_MODEL`, default `claude-sonnet-5-5`) | AI resume scoring with Claude; without an AI key the built-in keyword scorer is used. Then use **Re-score with AI** on a job to upgrade existing scores |
+| `OPENAI_API_KEY` (+ `OPENAI_MODEL`) | Alternative AI provider, used only when no Anthropic key is set (or with `SCORING_PROVIDER=openai`) |
 
 ## Operations
 

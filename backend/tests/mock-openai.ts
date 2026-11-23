@@ -1,13 +1,15 @@
 import http from "node:http";
 
 /**
- * Stands in for api.openai.com/v1/chat/completions so the real OpenAI SDK code path is exercised.
+ * Stands in for api.openai.com/v1/chat/completions and api.anthropic.com/v1/messages, so the real OpenAI
+ * and Anthropic SDK code paths are exercised.
  * Tests set `behaviour` to control what comes back and inspect `requests` to see what was sent.
  */
 export type Behaviour =
   | { kind: "score"; score: number; strengths?: string[]; gaps?: string[]; summary?: string }
   | { kind: "error"; status: number }
-  | { kind: "refusal" };
+  | { kind: "refusal" }
+  | { kind: "truncated" };
 
 export function startMockOpenAI(port: number) {
   const state = { behaviour: { kind: "score", score: 82 } as Behaviour, requests: [] as Record<string, any>[] };
@@ -15,10 +17,12 @@ export function startMockOpenAI(port: number) {
     let raw = "";
     req.on("data", (c) => (raw += c));
     req.on("end", () => {
-      if (req.method !== "POST" || !req.url?.endsWith("/chat/completions")) { res.writeHead(404).end(); return; }
+      const isClaude = req.url?.endsWith("/v1/messages");
+      if (req.method !== "POST" || !(isClaude || req.url?.endsWith("/chat/completions"))) { res.writeHead(404).end(); return; }
       const body = JSON.parse(raw);
-      state.requests.push({ ...body, authorization: req.headers.authorization });
+      state.requests.push({ ...body, authorization: req.headers.authorization, apiKey: req.headers["x-api-key"], anthropicVersion: req.headers["anthropic-version"] });
       const b = state.behaviour;
+      if (isClaude) { claudeReply(res, body, b); return; }
       if (b.kind === "error") { res.writeHead(b.status, { "Content-Type": "application/json" }).end(JSON.stringify({ error: { message: "mock upstream failure", type: "server_error" } })); return; }
       // Score derived from the resume so different candidates get different scores.
       const user = body.messages.find((m: { role: string }) => m.role === "user").content as string;
@@ -41,4 +45,28 @@ export function startMockOpenAI(port: number) {
   });
   return new Promise<{ state: typeof state; close: () => Promise<void> }>((resolve) =>
     server.listen(port, "127.0.0.1", () => resolve({ state, close: () => new Promise((r) => server.close(() => r())) })));
+}
+
+/** Anthropic Messages API response (structured output arrives as JSON in a text block). */
+function claudeReply(res: http.ServerResponse, body: any, b: Behaviour) {
+  if (b.kind === "error") {
+    res.writeHead(b.status, { "Content-Type": "application/json" }).end(JSON.stringify({ type: "error", error: { type: "api_error", message: "mock upstream failure" } }));
+    return;
+  }
+  const user = body.messages.find((m: { role: string }) => m.role === "user").content as string;
+  const resume = /<resume>([\s\S]*)<\/resume>/.exec(user)?.[1] ?? "";
+  const kw = (resume.match(/kubernetes|postgresql|typescript|aws/gi) ?? []).length;
+  const stop_reason = b.kind === "refusal" ? "refusal" : b.kind === "truncated" ? "max_tokens" : "end_turn";
+  const content = b.kind === "score"
+    ? [{ type: "text", text: JSON.stringify({
+        score: b.score === -1 ? 40 + kw * 7 : b.score,
+        summary: b.summary ?? "Strong backend match with relevant cloud experience.",
+        strengths: b.strengths ?? ["TypeScript and Node.js APIs", "AWS microservices"],
+        gaps: b.gaps ?? ["No Kubernetes in production"],
+      }) }]
+    : b.kind === "truncated" ? [{ type: "text", text: '{"score": 7' }] : [];
+  res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({
+    id: "msg_mock", type: "message", role: "assistant", model: body.model, content, stop_reason, stop_sequence: null,
+    usage: { input_tokens: 100, output_tokens: 50 },
+  }));
 }

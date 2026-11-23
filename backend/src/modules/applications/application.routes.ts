@@ -11,6 +11,7 @@ import { body, csv, query, uuidParam } from "../../lib/validate.js";
 import { emit } from "../../realtime/sse.js";
 import { paged } from "../jobs/job.routes.js";
 import { notify } from "../notifications/notify.js";
+import { aiEnabled } from "../scoring/scorer.js";
 import { kickScoring } from "../scoring/worker.js";
 import { downloadUrl } from "./files.js";
 
@@ -66,6 +67,28 @@ jobApplicationsRouter.post("/", requireRole("candidate"), async (req, res) => {
 });
 
 // ─── Employer: applicants for a job ──────────────────────────────────────────
+/**
+ * Re-queue a job's applications for scoring. Default scope "keyword" re-scores those the keyword scorer
+ * handled (or that failed) — e.g. after OPENAI_API_KEY is added; "all" re-scores every active application.
+ */
+jobApplicationsRouter.post("/rescore", requireRole("employer", "admin"), async (req, res) => {
+  const actor = me(req);
+  const jobId = uuidParam(req, "id");
+  const [job] = await db.select().from(jobs).where(eq(jobs.id, jobId));
+  if (!job || (actor.role === "employer" && job.employerId !== actor.id)) throw notFound("Job");
+  const { scope } = body(req, z.object({ scope: z.enum(["keyword", "all"]).default("keyword") }));
+  if (scope === "keyword" && !aiEnabled()) throw badRequest("AI scoring isn't configured: set OPENAI_API_KEY on the server first");
+  const which = scope === "keyword"
+    ? or(eq(applications.scoreProvider, "heuristic"), eq(applications.scoreStatus, "failed"))
+    : sql`true`;
+  const rows = await db.update(applications)
+    .set({ scoreStatus: "pending", scoreAttempts: 0, scoreError: null, scoreLockedUntil: null })
+    .where(and(eq(applications.jobId, jobId), sql`${applications.status} <> 'withdrawn'`, sql`${applications.scoreStatus} <> 'processing'`, which))
+    .returning({ id: applications.id });
+  if (rows.length) kickScoring();
+  res.status(202).json({ queued: rows.length });
+});
+
 jobApplicationsRouter.get("/", requireRole("employer", "admin"), async (req, res) => {
   const actor = me(req);
   const jobId = uuidParam(req, "id");
